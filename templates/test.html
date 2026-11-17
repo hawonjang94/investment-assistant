@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Data Collector &amp; Briefing Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="container">
+    <!-- 상단 헤더 -->
+    <header class="header">
+      <h1>종목 데이터 수집기</h1>
+      <p class="subtitle">6자리 종목코드로 네이버 금융 핵심 지표·실적과 최신 뉴스를 한눈에 수집합니다.</p>
+    </header>
+
+    <!-- 검색창 구역 -->
+    <section class="search-section card">
+      <form id="search-form" class="search-form">
+        <label for="stock-code-input" class="sr-only">종목코드 6자리</label>
+        <input
+          type="text"
+          id="stock-code-input"
+          name="code"
+          maxlength="6"
+          placeholder="종목코드 6자리 입력 (예: 000660)"
+          autocomplete="off"
+          required
+        />
+        <button type="submit" id="fetch-btn">데이터 수집</button>
+      </form>
+      <div class="quick-codes">
+        <span>빠른 입력:</span>
+        <button type="button" class="quick-btn" data-code="000660">SK하이닉스 (000660)</button>
+        <button type="button" class="quick-btn" data-code="005930">삼성전자 (005930)</button>
+        <button type="button" class="quick-btn" data-code="035420">NAVER (035420)</button>
+      </div>
+    </section>
+
+    <!-- 로딩 및 상태/오류 알림 구역 -->
+    <div id="loading-box" class="status-box hidden">
+      데이터를 수집하고 있습니다. 잠시만 기다려 주세요...
+    </div>
+    <div id="error-box" class="error-box hidden"></div>
+    <div id="partial-errors-box" class="warning-box hidden"></div>
+
+    <!-- 수집 결과 전체 구역 (초기에는 숨김) -->
+    <main id="result-container" class="hidden">
+      <!-- 종목 타이틀 & 스냅샷 카드 구역 -->
+      <section class="card">
+        <div class="stock-title-row">
+          <div>
+            <h2 id="stock-name">-</h2>
+            <span id="stock-code-badge" class="badge">-</span>
+          </div>
+          <div class="price-box">
+            <span id="current-price" class="current-price">-</span>
+            <span id="change-rate" class="change-rate">-</span>
+          </div>
+        </div>
+
+        <h3 class="section-title">핵심 투자 스냅샷</h3>
+        <div class="snapshot-grid">
+          <div class="metric-card">
+            <span class="metric-label">시가총액</span>
+            <strong id="metric-market-cap" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">PER (현재)</span>
+            <strong id="metric-per" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">추정 PER</span>
+            <strong id="metric-est-per" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">PBR</span>
+            <strong id="metric-pbr" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">외인소진율</span>
+            <strong id="metric-foreign-rate" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">배당수익률</span>
+            <strong id="metric-dividend-yield" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">52주 최고</span>
+            <strong id="metric-high-52w" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">52주 최저</span>
+            <strong id="metric-low-52w" class="metric-value">-</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- 기업 실적 분석 표 구역 -->
+      <section class="card">
+        <div class="section-header">
+          <h3 class="section-title">연간 기업 실적 추이</h3>
+          <span class="legend-note">
+            <span class="consensus-badge">추정(E)</span> 표시는 증권사 컨센서스 예상치입니다.
+          </span>
+        </div>
+        <div class="table-wrapper">
+          <table class="financials-table">
+            <thead>
+              <tr>
+                <th>기간</th>
+                <th>구분</th>
+                <th>매출액</th>
+                <th>영업이익</th>
+                <th>당기순이익</th>
+                <th>영업이익률</th>
+                <th>ROE</th>
+                <th>부채비율</th>
+              </tr>
+            </thead>
+            <tbody id="financials-tbody">
+              <!-- JS로 행 렌더링 -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 최신 관련 뉴스 구역 -->
+      <section class="card">
+        <h3 class="section-title">최신 관련 뉴스 (Serper)</h3>
+        <ul id="news-list" class="news-list">
+          <!-- JS로 뉴스 카드 렌더링 -->
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='test.js') }}"></script>
+</body>
+</html>

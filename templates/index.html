@@ -3,136 +3,324 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stock Data Collector &amp; Briefing Tool</title>
+  <title>나의 투자도우미 (My Investment Assistant)</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="container">
     <!-- 상단 헤더 -->
-    <header class="header">
-      <h1>종목 데이터 수집기</h1>
-      <p class="subtitle">6자리 종목코드로 네이버 금융 핵심 지표·실적과 최신 뉴스를 한눈에 수집합니다.</p>
+    <header class="header header-flex">
+      <div>
+        <h1>나의 투자도우미</h1>
+        <p class="subtitle">데이터 수집 · 포트폴리오 수학 계산 · AI 근거 기반 해석을 한곳에서</p>
+      </div>
+      <a href="/test" class="link-pill">1차 수집기 테스트 (/test)</a>
     </header>
 
-    <!-- 검색창 구역 -->
-    <section class="search-section card">
-      <form id="search-form" class="search-form">
-        <label for="stock-code-input" class="sr-only">종목코드 6자리</label>
-        <input
-          type="text"
-          id="stock-code-input"
-          name="code"
-          maxlength="6"
-          placeholder="종목코드 6자리 입력 (예: 000660)"
-          autocomplete="off"
-          required
-        />
-        <button type="submit" id="fetch-btn">데이터 수집</button>
-      </form>
-      <div class="quick-codes">
-        <span>빠른 입력:</span>
-        <button type="button" class="quick-btn" data-code="000660">SK하이닉스 (000660)</button>
-        <button type="button" class="quick-btn" data-code="005930">삼성전자 (005930)</button>
-        <button type="button" class="quick-btn" data-code="035420">NAVER (035420)</button>
+    <!-- 3탭 네비게이션 -->
+    <nav class="tab-nav" aria-label="메인 기능 탭">
+      <button type="button" class="tab-btn active" data-tab="tab1">
+        1. 종목 심층분석 채팅
+      </button>
+      <button type="button" class="tab-btn" data-tab="tab2">
+        2. 리밸런싱 도우미
+      </button>
+      <button type="button" class="tab-btn" data-tab="tab3">
+        3. 기술지표 차트 + 채팅
+      </button>
+    </nav>
+
+    <!-- ================= 탭 1: 종목 심층분석 채팅 (Dify 챗봇①) ================= -->
+    <section id="tab1" class="tab-panel active">
+      <div class="card">
+        <div class="section-header">
+          <h2 class="section-title">종목 심층분석 AI 채팅</h2>
+          <span class="badge">네이버 금융 + Serper 뉴스 근거 기반</span>
+        </div>
+        <div class="form-row">
+          <input
+            type="text"
+            id="tab1-code-input"
+            class="text-input"
+            placeholder="종목코드 6자리 또는 종목명 (예: 000660 또는 SK하이닉스)"
+            value="000660"
+          />
+          <button type="button" id="tab1-reset-btn" class="secondary-btn">새 대화</button>
+        </div>
+        <div class="quick-codes">
+          <span>빠른 선택:</span>
+          <button type="button" class="quick-btn tab1-quick" data-code="000660">SK하이닉스 (000660)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="005930">삼성전자 (005930)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="035420">NAVER (035420)</button>
+        </div>
       </div>
-    </section>
 
-    <!-- 로딩 및 상태/오류 알림 구역 -->
-    <div id="loading-box" class="status-box hidden">
-      데이터를 수집하고 있습니다. 잠시만 기다려 주세요...
-    </div>
-    <div id="error-box" class="error-box hidden"></div>
-    <div id="partial-errors-box" class="warning-box hidden"></div>
-
-    <!-- 수집 결과 전체 구역 (초기에는 숨김) -->
-    <main id="result-container" class="hidden">
-      <!-- 종목 타이틀 & 스냅샷 카드 구역 -->
-      <section class="card">
+      <!-- 수집된 근거 요약 카드 -->
+      <div id="tab1-snapshot-card" class="card hidden">
         <div class="stock-title-row">
           <div>
-            <h2 id="stock-name">-</h2>
-            <span id="stock-code-badge" class="badge">-</span>
+            <h3 id="tab1-stock-name">-</h3>
+            <span id="tab1-stock-code" class="badge">-</span>
           </div>
           <div class="price-box">
-            <span id="current-price" class="current-price">-</span>
-            <span id="change-rate" class="change-rate">-</span>
+            <span id="tab1-price" class="current-price">-</span>
+            <span id="tab1-rate" class="change-rate">-</span>
           </div>
         </div>
-
-        <h3 class="section-title">핵심 투자 스냅샷</h3>
         <div class="snapshot-grid">
           <div class="metric-card">
             <span class="metric-label">시가총액</span>
-            <strong id="metric-market-cap" class="metric-value">-</strong>
+            <strong id="tab1-mcap" class="metric-value">-</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">PER (현재)</span>
-            <strong id="metric-per" class="metric-value">-</strong>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">추정 PER</span>
-            <strong id="metric-est-per" class="metric-value">-</strong>
+            <span class="metric-label">PER / 추정PER</span>
+            <strong id="tab1-per" class="metric-value">-</strong>
           </div>
           <div class="metric-card">
             <span class="metric-label">PBR</span>
-            <strong id="metric-pbr" class="metric-value">-</strong>
+            <strong id="tab1-pbr" class="metric-value">-</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">외인소진율</span>
-            <strong id="metric-foreign-rate" class="metric-value">-</strong>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">배당수익률</span>
-            <strong id="metric-dividend-yield" class="metric-value">-</strong>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">52주 최고</span>
-            <strong id="metric-high-52w" class="metric-value">-</strong>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">52주 최저</span>
-            <strong id="metric-low-52w" class="metric-value">-</strong>
+            <span class="metric-label">수집 뉴스</span>
+            <strong id="tab1-news-count" class="metric-value">-</strong>
           </div>
         </div>
-      </section>
+        <div id="tab1-partial-errors" class="warning-box hidden" style="margin-top: 14px; margin-bottom: 0;"></div>
+      </div>
 
-      <!-- 기업 실적 분석 표 구역 -->
-      <section class="card">
+      <!-- 채팅창 -->
+      <div class="card">
+        <div id="tab1-chat-messages" class="chat-box">
+          <div class="chat-msg bot">
+            <div class="chat-bubble">
+              종목코드나 회사명을 입력하고 질문을 보내시면, 방금 수집한 네이버 금융 데이터와 최신 뉴스를 바탕으로 분석해 드립니다.
+            </div>
+          </div>
+        </div>
+        <div id="tab1-error" class="error-box hidden" style="margin-top: 12px; margin-bottom: 0;"></div>
+        <form id="tab1-chat-form" class="chat-form">
+          <input
+            type="text"
+            id="tab1-question-input"
+            class="text-input"
+            placeholder="질문을 입력하세요 (예: 최근 실적 추이와 PER 수준이 어때?)"
+            required
+          />
+          <button type="submit" id="tab1-send-btn" class="primary-btn">질문 전송</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ================= 탭 2: 리밸런싱 도우미 (Dify 없음 - 순수 Python 계산) ================= -->
+    <section id="tab2" class="tab-panel hidden">
+      <div class="card">
         <div class="section-header">
-          <h3 class="section-title">연간 기업 실적 추이</h3>
-          <span class="legend-note">
-            <span class="consensus-badge">추정(E)</span> 표시는 증권사 컨센서스 예상치입니다.
-          </span>
+          <h2 class="section-title">포트폴리오 리밸런싱 계산기</h2>
+          <span class="badge">AI 미사용 · 순수 Python 몬테카를로(3,000회)</span>
         </div>
-        <div class="table-wrapper">
-          <table class="financials-table">
-            <thead>
-              <tr>
-                <th>기간</th>
-                <th>구분</th>
-                <th>매출액</th>
-                <th>영업이익</th>
-                <th>당기순이익</th>
-                <th>영업이익률</th>
-                <th>ROE</th>
-                <th>부채비율</th>
-              </tr>
-            </thead>
-            <tbody id="financials-tbody">
-              <!-- JS로 행 렌더링 -->
-            </tbody>
-          </table>
+        <form id="tab2-form" class="form-row">
+          <input
+            type="text"
+            id="tab2-codes-input"
+            class="text-input"
+            placeholder="보유 종목/ETF를 쉼표로 구분해 입력 (예: SK하이닉스, 삼성전자, TIGER 미국S&P500)"
+            value="SK하이닉스, 삼성전자, TIGER 미국S&P500"
+            required
+          />
+          <button type="submit" id="tab2-calc-btn" class="primary-btn">적정 비중 계산</button>
+        </form>
+        <div class="quick-codes">
+          <span>추천 조합:</span>
+          <button type="button" class="quick-btn tab2-quick" data-codes="SK하이닉스, 삼성전자, TIGER 미국S&P500">
+            반도체 + 미국S&amp;P500
+          </button>
+          <button type="button" class="quick-btn tab2-quick" data-codes="005930, 035420, 360750, 148070">
+            주식 + 해외ETF + 국채 혼합
+          </button>
         </div>
-      </section>
+      </div>
 
-      <!-- 최신 관련 뉴스 구역 -->
-      <section class="card">
-        <h3 class="section-title">최신 관련 뉴스 (Serper)</h3>
-        <ul id="news-list" class="news-list">
-          <!-- JS로 뉴스 카드 렌더링 -->
-        </ul>
-      </section>
-    </main>
+      <div id="tab2-loading" class="status-box hidden">
+        최근 1년 주가를 불러와 3,000번 몬테카를로 시뮬레이션을 계산 중입니다...
+      </div>
+      <div id="tab2-error" class="error-box hidden"></div>
+
+      <div id="tab2-result" class="hidden">
+        <!-- 최적 포트폴리오 요약 4종 -->
+        <div class="card">
+          <div class="section-header">
+            <h3 class="section-title">최적 포트폴리오 성과 지표 (최대 샤프지수 기준)</h3>
+            <span id="tab2-period" class="legend-note">-</span>
+          </div>
+          <div class="snapshot-grid">
+            <div class="metric-card">
+              <span class="metric-label">연 기대수익률</span>
+              <strong id="tab2-opt-ret" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">연 변동성 (위험도)</span>
+              <strong id="tab2-opt-vol" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">샤프지수 (가성비)</span>
+              <strong id="tab2-opt-sharpe" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">최대 낙폭 (MDD)</span>
+              <strong id="tab2-opt-mdd" class="metric-value">-</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- 차트 2종 -->
+        <div class="charts-grid">
+          <div class="card">
+            <h3 class="section-title">추천 적정 비중 (%)</h3>
+            <div class="chart-container">
+              <canvas id="rebalance-weight-chart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="section-title">효율적 프론티어 (3,000회 시뮬레이션)</h3>
+            <div class="chart-container">
+              <canvas id="rebalance-frontier-chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- 종목별 상세 근거 표 -->
+        <div class="card">
+          <h3 class="section-title">종목별 적정 비중 및 1년 위험·수익 근거</h3>
+          <div class="table-wrapper">
+            <table class="financials-table">
+              <thead>
+                <tr>
+                  <th>종목명</th>
+                  <th>코드</th>
+                  <th>추천 비중</th>
+                  <th>최소변동성 비중</th>
+                  <th>연 기대수익률</th>
+                  <th>연 변동성</th>
+                  <th>최대 낙폭(MDD)</th>
+                </tr>
+              </thead>
+              <tbody id="tab2-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 탭 3: 기술지표 차트 + 채팅 (FDR + Dify 챗봇③) ================= -->
+    <section id="tab3" class="tab-panel hidden">
+      <div class="card">
+        <div class="section-header">
+          <h2 class="section-title">기술지표 차트 &amp; AI 지표해석기</h2>
+          <span class="badge">FDR 계산 숫자 자동 주입 · Dify 지표해석기</span>
+        </div>
+        <form id="tab3-calc-form" class="form-row">
+          <input
+            type="text"
+            id="tab3-code-input"
+            class="text-input"
+            placeholder="종목코드 6자리 또는 종목명 (예: 000660 또는 SK하이닉스)"
+            value="000660"
+            required
+          />
+          <button type="submit" id="tab3-calc-btn" class="primary-btn">차트 &amp; 지표 계산</button>
+        </form>
+        <div class="quick-codes">
+          <span>빠른 선택:</span>
+          <button type="button" class="quick-btn tab3-quick" data-code="000660">SK하이닉스 (000660)</button>
+          <button type="button" class="quick-btn tab3-quick" data-code="005930">삼성전자 (005930)</button>
+          <button type="button" class="quick-btn tab3-quick" data-code="360750">TIGER 미국S&amp;P500</button>
+        </div>
+      </div>
+
+      <div id="tab3-loading" class="status-box hidden">
+        최근 주가 데이터를 불러와 이동평균·RSI·MACD·볼린저밴드를 계산 중입니다...
+      </div>
+      <div id="tab3-error" class="error-box hidden"></div>
+
+      <div id="tab3-result" class="hidden">
+        <!-- 최신 기술지표 숫자 카드 -->
+        <div class="card">
+          <div class="section-header">
+            <h3 id="tab3-stock-title" class="section-title">-</h3>
+            <span id="tab3-latest-date" class="legend-note">-</span>
+          </div>
+          <div class="snapshot-grid">
+            <div class="metric-card">
+              <span class="metric-label">최근 종가</span>
+              <strong id="tab3-close" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">MA5 / MA20 / MA60</span>
+              <strong id="tab3-ma" class="metric-value" style="font-size: 0.95rem;">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">RSI (14)</span>
+              <strong id="tab3-rsi" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">MACD / 시그널</span>
+              <strong id="tab3-macd" class="metric-value" style="font-size: 0.95rem;">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">볼린저 상단</span>
+              <strong id="tab3-bb-upper" class="metric-value">-</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">볼린저 하단</span>
+              <strong id="tab3-bb-lower" class="metric-value">-</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- 차트 2종 -->
+        <div class="charts-grid">
+          <div class="card">
+            <h3 class="section-title">주가 · 이동평균선 · 볼린저밴드 (최근 90거래일)</h3>
+            <div class="chart-container">
+              <canvas id="tech-price-chart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="section-title">RSI (14) 추이</h3>
+            <div class="chart-container">
+              <canvas id="tech-rsi-chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- 지표해석기 채팅창 -->
+        <div class="card">
+          <div class="section-header">
+            <h3 class="section-title">AI 지표해석기 채팅</h3>
+            <span class="legend-note">계산된 최신 지표 숫자가 자동으로 챗봇에 주입됩니다.</span>
+          </div>
+          <div id="tab3-chat-messages" class="chat-box">
+            <div class="chat-msg bot">
+              <div class="chat-bubble">
+                차트 계산이 완료되었습니다! 현재 RSI, MACD, 볼린저밴드 등 궁금한 점을 질문해 보세요.
+              </div>
+            </div>
+          </div>
+          <div id="tab3-chat-error" class="error-box hidden" style="margin-top: 12px; margin-bottom: 0;"></div>
+          <form id="tab3-chat-form" class="chat-form">
+            <input
+              type="text"
+              id="tab3-question-input"
+              class="text-input"
+              placeholder="질문을 입력하세요 (예: 현재 RSI와 볼린저밴드 위치 쉽게 설명해줘)"
+              required
+            />
+            <button type="submit" id="tab3-send-btn" class="primary-btn">지표 해석 요청</button>
+          </form>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>

@@ -38,6 +38,55 @@ def validate_stock_code(code: Any) -> str:
     return code_str
 
 
+def resolve_stock_code(code_or_name: Any) -> str:
+    """6자리 종목코드 또는 종목명(예: 'SK하이닉스')을 받아 6자리 종목코드 문자열로 변환"""
+    if code_or_name is None:
+        raise ValueError("종목코드 또는 종목명을 입력해 주세요.")
+
+    text = str(code_or_name).strip()
+    if not text:
+        raise ValueError("종목코드 또는 종목명을 입력해 주세요.")
+
+    # 이미 6자리 숫자(예: '000660')면 그대로 반환
+    if re.fullmatch(r"\d{6}", text):
+        return text
+
+    url = "https://ac.stock.naver.com/ac"
+    params = {"q": text, "target": "stock"}
+    logger.info("[NAVER] 종목명 -> 종목코드 검색 시작 (query=%s)", text)
+
+    try:
+        resp = requests.get(url, params=params, headers=NAVER_HEADERS, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout as exc:
+        raise RuntimeError("종목명 검색 응답 시간이 초과되었습니다.") from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(f"종목명 검색 네트워크 연결에 실패했습니다: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"종목명 검색 실패 (HTTP {resp.status_code})")
+
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise RuntimeError("종목명 검색 응답을 JSON으로 변환하는 데 실패했습니다.") from exc
+
+    items = [
+        item for item in (data.get("items") or [])
+        if item.get("nationCode") == "KOR" and re.fullmatch(r"\d{6}", str(item.get("code", "")))
+    ]
+
+    if not items:
+        raise ValueError(f"'{text}'에 해당하는 국내 상장 종목을 찾을 수 없습니다.")
+
+    # 정확히 이름이 일치하는 종목 우선 선택, 없으면 가장 상단 결과 선택
+    exact = next((item for item in items if str(item.get("name", "")).strip().lower() == text.lower()), None)
+    matched = exact or items[0]
+    found_code = str(matched["code"])
+
+    logger.info("[PARSE] 종목명 매핑 완료 ('%s' -> %s %s)", text, matched.get("name"), found_code)
+    return found_code
+
+
 def clean_number(value: Any) -> int | float | None:
     """콤마와 단위가 섞인 문자열에서 순수 숫자(int/float)만 추출 (결측치는 None)"""
     if value is None:
