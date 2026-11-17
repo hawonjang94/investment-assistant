@@ -1,0 +1,360 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  background-color: #f4f6f9;
+  color: #1f2937;
+  line-height: 1.5;
+  padding: 24px 16px;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+/* 헤더 */
+.header {
+  margin-bottom: 20px;
+}
+
+.header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.subtitle {
+  margin-top: 4px;
+  font-size: 0.95rem;
+  color: #6b7280;
+}
+
+/* 공통 카드 */
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+/* 검색 영역 */
+.search-form {
+  display: flex;
+  gap: 10px;
+}
+
+#stock-code-input {
+  flex: 1;
+  padding: 12px 16px;
+  font-size: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+#stock-code-input:focus {
+  border-color: #2563eb;
+}
+
+#fetch-btn {
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: #2563eb;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#fetch-btn:hover {
+  background-color: #1d4ed8;
+}
+
+#fetch-btn:disabled {
+  background-color: #93c5fd;
+  cursor: not-allowed;
+}
+
+.quick-codes {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.quick-btn {
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  color: #374151;
+  background-color: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.quick-btn:hover {
+  background-color: #e5e7eb;
+}
+
+/* 알림 박스 */
+.status-box,
+.error-box,
+.warning-box {
+  padding: 14px 18px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 0.95rem;
+}
+
+.status-box {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.error-box {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.warning-box {
+  background-color: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+/* 종목 헤더 & 가격 */
+.stock-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.stock-title-row h2 {
+  display: inline-block;
+  font-size: 1.5rem;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #4b5563;
+  background-color: #f3f4f6;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+.price-box {
+  text-align: right;
+}
+
+.current-price {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-right: 10px;
+}
+
+.change-rate {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* 한국 증시 색상 규칙: 상승=빨강, 하락=파랑 */
+.up {
+  color: #dc2626;
+}
+
+.down {
+  color: #2563eb;
+}
+
+.flat {
+  color: #4b5563;
+}
+
+/* 스냅샷 8종 그리드 */
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+  color: #111827;
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.metric-label {
+  display: block;
+  font-size: 0.82rem;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* 실적 표 */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.section-header .section-title {
+  margin-bottom: 0;
+}
+
+.legend-note {
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.consensus-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #92400e;
+  background-color: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+}
+
+.actual-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #374151;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.financials-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.financials-table th,
+.financials-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.financials-table th:nth-child(1),
+.financials-table td:nth-child(1),
+.financials-table th:nth-child(2),
+.financials-table td:nth-child(2) {
+  text-align: center;
+}
+
+.financials-table thead th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.consensus-row {
+  background-color: #fffbeb;
+}
+
+/* 뉴스 리스트 */
+.news-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.news-item {
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background-color: #fafafa;
+  transition: border-color 0.2s;
+}
+
+.news-item:hover {
+  border-color: #93c5fd;
+}
+
+.news-title {
+  display: block;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  text-decoration: none;
+  margin-bottom: 6px;
+}
+
+.news-title:hover {
+  text-decoration: underline;
+}
+
+.news-snippet {
+  font-size: 0.88rem;
+  color: #4b5563;
+  margin-bottom: 6px;
+}
+
+.news-meta {
+  font-size: 0.78rem;
+  color: #9ca3af;
+}
