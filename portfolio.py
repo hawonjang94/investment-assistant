@@ -6,13 +6,13 @@ import FinanceDataReader as fdr
 import numpy as np
 import pandas as pd
 
-from collector import fetch_basic_info, resolve_stock_code
+from collector import fetch_basic_info, resolve_market_and_symbol
 
 logger = logging.getLogger(__name__)
 
 
 def parse_stock_list(raw_codes: Any) -> list[str]:
-    """문자열('000660, 005930') 또는 리스트 입력을 중복 없는 6자리 종목코드 리스트로 정규화"""
+    """문자열('000660, 엔비디아') 또는 리스트 입력을 중복 없는 종목코드/티커 리스트로 정규화"""
     if isinstance(raw_codes, str):
         tokens = [t.strip() for t in re_split_codes(raw_codes) if t.strip()]
     elif isinstance(raw_codes, list):
@@ -22,9 +22,9 @@ def parse_stock_list(raw_codes: Any) -> list[str]:
 
     resolved: list[str] = []
     for token in tokens:
-        code = resolve_stock_code(token)
-        if code not in resolved:
-            resolved.append(code)
+        _, symbol = resolve_market_and_symbol(token)
+        if symbol not in resolved:
+            resolved.append(symbol)
 
     if len(resolved) < 2:
         raise ValueError("리밸런싱 계산을 위해 최소 2개 이상의 서로 다른 종목을 입력해 주세요.")

@@ -6,7 +6,7 @@ import FinanceDataReader as fdr
 import numpy as np
 import pandas as pd
 
-from collector import fetch_basic_info, resolve_stock_code
+from collector import fetch_basic_info, resolve_market_and_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,15 @@ def calculate_technical_indicators(
     chart_bars: int = 90,
 ) -> dict[str, Any]:
     """FinanceDataReader로 주가를 수집하고 MA, RSI, MACD, 볼린저밴드를 계산"""
-    code = resolve_stock_code(code_or_name)
+    market, code = resolve_market_and_symbol(code_or_name)
 
     # 종목명 확인
-    try:
-        stock_name = fetch_basic_info(code)["name"]
-    except Exception:
-        stock_name = code
+    stock_name = code
+    if market == "KR":
+        try:
+            stock_name = fetch_basic_info(code)["name"]
+        except Exception:
+            stock_name = code
 
     end_dt = datetime.now()
     start_dt = end_dt - timedelta(days=lookback_days)
