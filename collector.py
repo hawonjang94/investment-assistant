@@ -313,20 +313,93 @@ def fetch_financials(code: str) -> list[dict[str, Any]]:
     return financials
 
 
-def is_us_ticker(code_or_name: Any, market: str | None = None) -> bool:
-    """입력값과 시장 선택을 보고 미국 주식/ETF 티커인지 판별"""
+def resolve_market_and_symbol(code_or_name: Any, market_hint: str | None = None) -> tuple[str, str]:
+    """입력값(예: '삼성전자', '엔비디아', 'Apple', '000660', 'NVDA')을 보고 자동으로 ('KR'|'US', 코드/티커) 반환"""
     text = str(code_or_name or "").strip()
     if not text:
-        return False
-    # 6자리 숫자는 항상 국내 종목
+        raise ValueError("종목명 또는 종목코드를 입력해 주세요. (예: 삼성전자, 엔비디아, Apple, 000660)")
+
+    # 1. 6자리 숫자는 무조건 국내 종목
     if re.fullmatch(r"\d{6}", text):
-        return False
-    # 사용자가 '미국 주식/ETF' 버튼을 선택한 경우 한글명('엔비디아' 등)도 미국으로 처리
-    if market == "US":
-        return True
-    if re.search(r"[가-힣]", text):
-        return False
-    return bool(re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text))
+        return ("KR", text)
+
+    # 2. 명시적으로 US 힌트가 주어진 경우 미국 우선 검색
+    if market_hint == "US":
+        return ("US", resolve_us_ticker(text))
+
+    # 3. 국내 자동완성(stock) 검색
+    kr_items: list[dict[str, Any]] = []
+    try:
+        r_kr = requests.get(
+            "https://ac.stock.naver.com/ac",
+            params={"q": text, "target": "stock"},
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r_kr.status_code == 200:
+            kr_items = [
+                item for item in (r_kr.json().get("items") or [])
+                if item.get("nationCode") == "KOR" and re.fullmatch(r"\d{6}", str(item.get("code", "")))
+            ]
+    except Exception:
+        pass
+
+    # 국내에 이름이 정확히 일치하는 종목(예: 'NAVER', '삼성전자', 'KODEX 200')이 있으면 국내 확정
+    kr_exact = next((i for i in kr_items if str(i.get("name", "")).strip().lower() == text.lower()), None)
+    if kr_exact:
+        return ("KR", str(kr_exact["code"]))
+
+    # 국내 후보가 있으면 국내 우선 (단, 영문 1~5자 티커는 미국 검색도 함께 확인)
+    if kr_items and not re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text):
+        return ("KR", str(kr_items[0]["code"]))
+
+    # 4. 미국(해외) 자동완성(worldstock) 검색 ('엔비디아', 'Apple', 'NVIDIA', 'SCHD' 등)
+    try:
+        r_us = requests.get(
+            "https://ac.stock.naver.com/ac",
+            params={"q": text, "target": "worldstock"},
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r_us.status_code == 200:
+            us_items = [
+                item for item in (r_us.json().get("items") or [])
+                if item.get("nationCode") == "USA" and item.get("code")
+            ]
+            if us_items:
+                us_exact = next(
+                    (
+                        i for i in us_items
+                        if str(i.get("code", "")).strip().lower() == text.lower()
+                        or str(i.get("name", "")).strip().lower() == text.lower()
+                    ),
+                    None,
+                )
+                matched = us_exact or us_items[0]
+                ticker = str(matched["code"]).strip().upper()
+                logger.info("[PARSE] 해외 종목 자동 인식 ('%s' -> US %s)", text, ticker)
+                return ("US", ticker)
+    except Exception:
+        pass
+
+    # 5. 국내 부분 일치 결과가 있었다면 반환
+    if kr_items:
+        return ("KR", str(kr_items[0]["code"]))
+
+    # 6. 영문 티커 형식이면 미국 티커로 시도
+    if re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text):
+        return ("US", text.upper())
+
+    raise ValueError(f"'{text}'에 해당하는 국내/미국 종목을 찾을 수 없습니다.")
+
+
+def is_us_ticker(code_or_name: Any, market: str | None = None) -> bool:
+    """입력값과 시장 선택을 보고 미국 주식/ETF 티커인지 판별"""
+    try:
+        detected_market, _ = resolve_market_and_symbol(code_or_name, market_hint=market)
+        return detected_market == "US"
+    except Exception:
+        return market == "US"
 
 
 def resolve_us_ticker(code_or_name: Any) -> str:
@@ -666,12 +739,13 @@ def fetch_news(stock_name: str, num: int = 5, gl: str = "kr") -> list[dict[str, 
 
 
 def collect_stock_data(code_or_ticker: str, market: str | None = None) -> dict[str, Any]:
-    """국내/미국 주식·ETF를 판별하여 시세/투자정보/실적(또는 ETF 정보)/뉴스를 통합 수집"""
+    """국내/미국 주식·ETF를 자동 판별하여 시세/투자정보/실적(또는 ETF 정보)/뉴스를 통합 수집"""
     errors: list[str] = []
+    detected_market, resolved_symbol = resolve_market_and_symbol(code_or_ticker, market_hint=market)
 
-    # 0. 미국 주식/ETF 판별
-    if is_us_ticker(code_or_ticker, market=market):
-        us_data = fetch_us_asset_data(code_or_ticker)
+    # 0. 미국 주식/ETF
+    if detected_market == "US":
+        us_data = fetch_us_asset_data(resolved_symbol)
         stock_code = us_data["code"]
         stock_name = us_data["name"]
         news: list[dict[str, Any]] = []
@@ -695,7 +769,7 @@ def collect_stock_data(code_or_ticker: str, market: str | None = None) -> dict[s
         }
 
     # 1. 국내 종목 코드 확정 및 ETF 여부 판별
-    resolved_code = resolve_stock_code(code_or_ticker)
+    resolved_code = resolved_symbol
     stock_type = fetch_kr_stock_type(resolved_code)
 
     if stock_type == "etf":
@@ -778,10 +852,11 @@ def _clean_yymm_label(raw: str) -> str:
 
 def fetch_financial_statements(code_or_name: Any, market: str | None = None) -> dict[str, Any]:
     """종목 설명, 현재 주가 및 (기업이면 3대 재무제표, ETF면 ETF 전용 정보) 수집"""
-    if is_us_ticker(code_or_name, market=market):
-        return fetch_us_asset_data(code_or_name)
+    detected_market, resolved_symbol = resolve_market_and_symbol(code_or_name, market_hint=market)
+    if detected_market == "US":
+        return fetch_us_asset_data(resolved_symbol)
 
-    code = resolve_stock_code(code_or_name)
+    code = resolved_symbol
     if fetch_kr_stock_type(code) == "etf":
         return fetch_kr_etf_info(code)
 
@@ -932,8 +1007,9 @@ def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str,
     """종목의 최근 공시 20건을 카테고리별로 분류하고 DART(미국은 SEC) 바로가기 링크와 함께 반환"""
     from urllib.parse import quote
 
-    if is_us_ticker(code_or_name, market=market):
-        ticker = resolve_us_ticker(code_or_name)
+    detected_market, resolved_symbol = resolve_market_and_symbol(code_or_name, market_hint=market)
+    if detected_market == "US":
+        ticker = resolved_symbol
         sec_url = f"https://www.sec.gov/edgar/searchedgar/companysearch?q={quote(ticker)}"
         return {
             "code": ticker,
@@ -947,7 +1023,7 @@ def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str,
             "disclosures": [],
         }
 
-    code = resolve_stock_code(code_or_name)
+    code = resolved_symbol
     basic = fetch_basic_info(code)
     stock_name = basic["name"]
 

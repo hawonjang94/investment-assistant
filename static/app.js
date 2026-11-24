@@ -152,34 +152,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  let tab1Market = "KR";
-  const marketBtns = document.querySelectorAll(".market-btn");
-  const quickKrBox = document.getElementById("tab1-quick-kr");
-  const quickUsBox = document.getElementById("tab1-quick-us");
-
-  function setMarketMode(market) {
-    tab1Market = market === "US" ? "US" : "KR";
-    marketBtns.forEach((b) => {
-      b.classList.toggle("active", b.dataset.market === tab1Market);
-    });
-    if (tab1Market === "US") {
-      tab1CodeInput.placeholder = "미국 티커 입력 (예: AAPL, NVDA, SPY, SCHD)";
-      quickKrBox.classList.add("hidden");
-      quickUsBox.classList.remove("hidden");
-    } else {
-      tab1CodeInput.placeholder = "종목코드 6자리 또는 종목명 (예: 000660, KODEX 200)";
-      quickUsBox.classList.add("hidden");
-      quickKrBox.classList.remove("hidden");
-    }
-    console.log(`[MARKET]    시장 선택 전환 (${tab1Market})`);
-  }
-
-  marketBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      setMarketMode(btn.dataset.market);
-    });
-  });
-
   function getStockLabelForSuggestions(rawVal) {
     const val = (rawVal || "").trim().toUpperCase();
     if (!val) return "이 종목";
@@ -189,7 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       "069500": "KODEX 200",
       "035420": "NAVER",
       "NVDA": "엔비디아",
-      "AAPL": "애플",
+      "AAPL": "Apple",
       "SPY": "SPY",
       "SCHD": "SCHD",
     };
@@ -220,16 +192,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // 초기 추천 질문 렌더링 및 입력창 변경 시 시장 자동 인식 + 추천 질문 반영
+  // 초기 추천 질문 렌더링 및 입력창 변경 시 추천 질문 실시간 반영
   renderSuggestedQuestions(tab1CodeInput.value);
   tab1CodeInput.addEventListener("input", () => {
-    const raw = tab1CodeInput.value.trim();
-    if (/^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$/.test(raw)) {
-      if (tab1Market !== "US") setMarketMode("US");
-    } else if (/^\d{6}$/.test(raw) || /[가-힣]/.test(raw)) {
-      if (tab1Market !== "KR") setMarketMode("KR");
-    }
-    renderSuggestedQuestions(raw);
+    renderSuggestedQuestions(tab1CodeInput.value.trim());
   });
 
   function resetTab1Chat(noticeText = "새 대화를 시작했습니다. 종목과 질문을 입력해 주세요.") {
@@ -253,12 +219,12 @@ document.addEventListener("DOMContentLoaded", () => {
         fetch("/api/financials", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+          body: JSON.stringify({ code: cleanCode }),
         }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d }))),
         fetch("/api/disclosures", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+          body: JSON.stringify({ code: cleanCode }),
         }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d }))),
       ];
 
@@ -267,7 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
           fetch("/fetch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+            body: JSON.stringify({ code: cleanCode }),
           }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d })))
         );
       }
@@ -308,8 +274,6 @@ document.addEventListener("DOMContentLoaded", () => {
   tab1QuickBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       const code = btn.dataset.code || "";
-      const market = btn.dataset.market || "KR";
-      setMarketMode(market);
       tab1CodeInput.value = code;
       renderSuggestedQuestions(code);
       resetTab1Chat(`${btn.textContent} 선택 완료! 아래 추천 질문을 누르거나 직접 질문해 주세요.`);
@@ -359,7 +323,6 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code,
-          market: tab1Market,
           question,
           conversation_id: tab1ConversationId,
         }),

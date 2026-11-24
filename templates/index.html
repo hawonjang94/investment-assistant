@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>나의 투자도우미 (My Investment Assistant)</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20261124_7" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20261124_8" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -39,32 +39,24 @@
           <span class="badge">기업개요 · 주가 · AI 채팅 · 재무분석 · 최근 공시</span>
         </div>
         <div class="form-row">
-          <div class="market-toggle" role="group" aria-label="시장 선택">
-            <button type="button" class="market-btn active" data-market="KR">국내 주식/ETF</button>
-            <button type="button" class="market-btn" data-market="US">미국 주식/ETF</button>
-          </div>
           <input
             type="text"
             id="tab1-code-input"
             class="text-input"
-            placeholder="종목코드 6자리 또는 종목명 (예: 000660, KODEX 200)"
+            placeholder="종목명 또는 코드 입력 (예: 삼성전자, 엔비디아, Apple, 000660, KODEX 200)"
             value="000660"
           />
           <button type="button" id="tab1-load-btn" class="primary-btn">종목 조회</button>
           <button type="button" id="tab1-reset-btn" class="secondary-btn">새 대화</button>
         </div>
-        <div id="tab1-quick-kr" class="quick-codes">
-          <span>국내 빠른 선택:</span>
-          <button type="button" class="quick-btn tab1-quick" data-code="000660" data-market="KR">SK하이닉스 (000660)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="005930" data-market="KR">삼성전자 (005930)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="069500" data-market="KR">KODEX 200 (ETF)</button>
-        </div>
-        <div id="tab1-quick-us" class="quick-codes hidden">
-          <span>미국 빠른 선택:</span>
-          <button type="button" class="quick-btn tab1-quick" data-code="NVDA" data-market="US">엔비디아 (NVDA)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="AAPL" data-market="US">애플 (AAPL)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="SPY" data-market="US">S&amp;P500 (SPY)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="SCHD" data-market="US">배당ETF (SCHD)</button>
+        <div class="quick-codes">
+          <span>빠른 선택:</span>
+          <button type="button" class="quick-btn tab1-quick" data-code="000660">SK하이닉스 (000660)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="삼성전자">삼성전자</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="KODEX 200">KODEX 200 (ETF)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="엔비디아">엔비디아 (US)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="Apple">Apple (US)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="SCHD">SCHD (US ETF)</button>
         </div>
       </div>
 
@@ -589,6 +581,6 @@
     </section>
   </div>
 
-  <script src="{{ url_for('static', filename='app.js') }}?v=20261124_7"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=20261124_8"></script>
 </body>
 </html>
