@@ -617,6 +617,10 @@ def fetch_us_asset_data(ticker_input: Any) -> dict[str, Any]:
         "currency": "USD",
         "is_etf": is_etf,
         "descriptions": descriptions,
+        "description_sources": [
+            {"label": "Yahoo Finance 기업 개요", "url": f"https://finance.yahoo.com/quote/{ticker}/profile"},
+            {"label": "SEC EDGAR 공식 공시", "url": f"https://www.sec.gov/edgar/searchedgar/companysearch?q={ticker}"},
+        ],
         "snapshot": snapshot,
     }
 
@@ -976,10 +980,16 @@ def fetch_financial_statements(code_or_name: Any, market: str | None = None) -> 
         len(statements["cashflow"]["rows"]),
     )
 
+    from urllib.parse import quote
+
     return {
         "code": code,
         "name": stock_name,
         "descriptions": descriptions,
+        "description_sources": [
+            {"label": "네이버 금융 기업개요", "url": f"https://finance.naver.com/item/main.naver?code={code}"},
+            {"label": "DART 전자공시", "url": f"https://dart.fss.or.kr/dsab001/main.do?textCrpNm={quote(stock_name)}"},
+        ],
         "snapshot": snapshot,
         "statements": statements,
     }

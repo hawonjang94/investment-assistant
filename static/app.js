@@ -207,10 +207,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   tab1ResetBtn.addEventListener("click", () => resetTab1Chat());
 
+  let tab1LoadSeq = 0;
+
   async function loadTab1DeepInfo(code, includeBasicFetch = false) {
     const cleanCode = (code || "").trim();
     if (!cleanCode) return;
 
+    const seq = ++tab1LoadSeq;
     tab1LoadingData.classList.remove("hidden");
     tab1Error.classList.add("hidden");
 
@@ -239,6 +242,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const results = await Promise.all(requests);
+      if (seq !== tab1LoadSeq) return;
+
       const finRes = results[0];
       const discRes = results[1];
       const fetchRes = includeBasicFetch ? results[2] : null;
@@ -257,18 +262,30 @@ document.addEventListener("DOMContentLoaded", () => {
         renderTab1DisclosuresSection(discRes.data);
       }
     } catch (err) {
+      if (seq !== tab1LoadSeq) return;
       tab1Error.textContent = err.message;
       tab1Error.classList.remove("hidden");
       console.error(`[ERROR]     심층분석 데이터 조회 오류 (${err.message})`);
     } finally {
-      tab1LoadingData.classList.add("hidden");
+      if (seq === tab1LoadSeq) {
+        tab1LoadingData.classList.add("hidden");
+      }
     }
   }
 
   tab1LoadBtn.addEventListener("click", () => {
     const code = tab1CodeInput.value.trim();
     if (!code) return;
+    renderSuggestedQuestions(code);
+    resetTab1Chat(`${code} 종목 정보를 불러왔습니다. 아래 추천 질문을 누르거나 직접 질문해 주세요.`);
     loadTab1DeepInfo(code, true);
+  });
+
+  tab1CodeInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      tab1LoadBtn.click();
+    }
   });
 
   tab1QuickBtns.forEach((btn) => {
@@ -1087,6 +1104,27 @@ document.addEventListener("DOMContentLoaded", () => {
         p.textContent = `• ${text}`;
         descBox.appendChild(p);
       });
+    }
+
+    const sources = data.description_sources || [];
+    if (sources.length > 0) {
+      const srcP = document.createElement("p");
+      srcP.style.marginTop = "8px";
+      srcP.style.fontSize = "0.85rem";
+      srcP.style.color = "#64748b";
+      srcP.appendChild(document.createTextNode("🔎 검증 출처: "));
+      sources.forEach((src, idx) => {
+        if (idx > 0) srcP.appendChild(document.createTextNode(" · "));
+        const a = document.createElement("a");
+        a.href = src.url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = `${src.label} ↗`;
+        a.style.color = "#2563eb";
+        a.style.textDecoration = "underline";
+        srcP.appendChild(a);
+      });
+      descBox.appendChild(srcP);
     }
 
     const etfPanel = document.getElementById("subtab-etf");
