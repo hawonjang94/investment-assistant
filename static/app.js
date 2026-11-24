@@ -1152,14 +1152,46 @@ document.addEventListener("DOMContentLoaded", () => {
     tab1DiscExpanded = false;
     tab1DiscPage = 1;
 
-    document.getElementById("tab1-disc-title").textContent = `${data.name} (${data.code}) 최근 공시`;
-    document.getElementById("tab1-market-badge").textContent = data.market || "KOSPI";
+    const isUs = Boolean(data.is_us);
+    const sourceLabel = isUs ? "SEC" : "DART";
 
+    document.getElementById("tab1-disc-title").textContent = `${data.name} (${data.code}) 최근 공시 (${sourceLabel})`;
+    document.getElementById("tab1-market-badge").textContent = data.market || (isUs ? "US (SEC EDGAR)" : "KOSPI");
+
+    const linksTitle = document.getElementById("tab1-disc-links-title");
+    const homeLink = document.getElementById("tab1-disc-home-link");
+    const link2 = document.getElementById("tab1-disc-link-2");
+    const link3 = document.getElementById("tab1-disc-link-3");
     const dartCorpLink = document.getElementById("tab1-dart-corp-link");
-    if (data.dart_links?.corp_search) {
-      dartCorpLink.href = data.dart_links.corp_search;
-      dartCorpLink.textContent = `${data.name} DART 공시검색 ↗`;
-      dartCorpLink.classList.remove("hidden");
+
+    if (isUs) {
+      linksTitle.textContent = "🏛️ SEC EDGAR 바로가기:";
+      homeLink.href = data.dart_links?.home || "https://www.sec.gov/edgar/searchedgar/companysearch";
+      homeLink.textContent = "SEC EDGAR 검색 ↗";
+      link2.href = data.dart_links?.browse || data.dart_links?.corp_search || "https://www.sec.gov/edgar/searchedgar/companysearch";
+      link2.textContent = `${data.code} SEC 기업페이지 ↗`;
+      link2.classList.remove("hidden");
+      link3.classList.add("hidden");
+      if (data.dart_links?.corp_search) {
+        dartCorpLink.href = data.dart_links.corp_search;
+        dartCorpLink.textContent = `${data.name} SEC 공시검색 ↗`;
+        dartCorpLink.classList.remove("hidden");
+      }
+    } else {
+      linksTitle.textContent = "🏛️ DART 바로가기:";
+      homeLink.href = data.dart_links?.home || "https://dart.fss.or.kr/";
+      homeLink.textContent = "DART 메인 ↗";
+      link2.href = data.dart_links?.kospi || "https://dart.fss.or.kr/dsac001/mainY.do";
+      link2.textContent = "유가증권시장(코스피) 최근공시 ↗";
+      link2.classList.remove("hidden");
+      link3.href = data.dart_links?.kosdaq || "https://dart.fss.or.kr/dsac001/mainK.do?selectDate=&sort=&series=&mdayCnt=0";
+      link3.textContent = "코스닥시장 최근공시 ↗";
+      link3.classList.remove("hidden");
+      if (data.dart_links?.corp_search) {
+        dartCorpLink.href = data.dart_links.corp_search;
+        dartCorpLink.textContent = `${data.name} DART 공시검색 ↗`;
+        dartCorpLink.classList.remove("hidden");
+      }
     }
 
     renderTab1CategoryFilters();
@@ -1297,7 +1329,7 @@ document.addEventListener("DOMContentLoaded", () => {
       dartLink.href = item.dart_url;
       dartLink.target = "_blank";
       dartLink.rel = "noopener noreferrer";
-      dartLink.textContent = "DART에서 전체공시 보기 ↗";
+      dartLink.textContent = item.source === "SEC" ? "SEC EDGAR에서 전체공시 보기 ↗" : "DART에서 전체공시 보기 ↗";
 
       actions.appendChild(meta);
       actions.appendChild(dartLink);

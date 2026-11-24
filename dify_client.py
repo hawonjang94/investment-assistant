@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import requests
@@ -11,6 +12,25 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 DIFY_TIMEOUT = 60
+DIFY_MAX_ATTEMPTS = 3
+DIFY_RETRY_DELAY = 1.5
+TRANSIENT_KEYWORDS = (
+    "high demand",
+    "overloaded",
+    "temporarily",
+    "rate limit",
+    "try again later",
+)
+
+
+def _is_transient_dify_error(status_code: int, detail: str) -> bool:
+    """일시적인 모델 과부하/서버 혼잡 오류인지 판별"""
+    if status_code in {429, 500, 502, 503, 504}:
+        return True
+    if status_code == 400:
+        lowered = detail.lower()
+        return any(kw in lowered for kw in TRANSIENT_KEYWORDS)
+    return False
 
 
 def _get_dify_config(bot_type: str) -> tuple[str, str]:
@@ -80,22 +100,41 @@ def ask_dify_chatbot(
     # API Key는 로그에 절대 출력하지 않는다
     logger.info("[DIFY] Dify 챗봇 API 호출 시작 (bot=%s)", bot_type)
 
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=DIFY_TIMEOUT)
-    except requests.Timeout as exc:
-        raise RuntimeError("Dify 챗봇 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.") from exc
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Dify 서버 네트워크 연결에 실패했습니다: {exc}") from exc
+    resp = None
+    for attempt in range(1, DIFY_MAX_ATTEMPTS + 1):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=DIFY_TIMEOUT)
+        except requests.Timeout as exc:
+            if attempt < DIFY_MAX_ATTEMPTS:
+                logger.warning("[DIFY] 응답 시간 초과, 재시도 (%d/%d)", attempt, DIFY_MAX_ATTEMPTS)
+                time.sleep(DIFY_RETRY_DELAY)
+                continue
+            raise RuntimeError("Dify 챗봇 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.") from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Dify 서버 네트워크 연결에 실패했습니다: {exc}") from exc
 
-    if resp.status_code in {401, 403}:
-        raise RuntimeError("Dify API Key가 유효하지 않거나 권한이 없습니다.")
-    if resp.status_code != 200:
+        if resp.status_code in {401, 403}:
+            raise RuntimeError("Dify API Key가 유효하지 않거나 권한이 없습니다.")
+        if resp.status_code == 200:
+            break
+
         detail = ""
         try:
             err_json = resp.json()
             detail = err_json.get("message") or str(err_json)
         except Exception:
             detail = resp.text[:200]
+
+        if attempt < DIFY_MAX_ATTEMPTS and _is_transient_dify_error(resp.status_code, detail):
+            logger.warning(
+                "[DIFY] 일시적 모델 혼잡 오류(HTTP %s), 재시도 (%d/%d)",
+                resp.status_code,
+                attempt,
+                DIFY_MAX_ATTEMPTS,
+            )
+            time.sleep(DIFY_RETRY_DELAY)
+            continue
+
         raise RuntimeError(f"Dify 챗봇 호출 실패 (HTTP {resp.status_code}): {detail}")
 
     try:

@@ -1003,25 +1003,160 @@ def _classify_disclosure(title: str) -> str:
     return "기타 공시"
 
 
+_SEC_HEADERS = {
+    "User-Agent": "InvestmentAssistant/1.0 (contact@example.com)",
+}
+_SEC_CIK_CACHE: dict[str, tuple[str, str]] = {}
+
+
+def _get_sec_company_info(ticker: str) -> tuple[str | None, str | None]:
+    """SEC EDGAR company_tickers.json에서 미국 종목의 10자리 CIK와 공식 회사명을 조회"""
+    sym = ticker.upper().strip()
+    if sym in _SEC_CIK_CACHE:
+        return _SEC_CIK_CACHE[sym]
+
+    try:
+        resp = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers=_SEC_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            for entry in data.values() if isinstance(data, dict) else []:
+                t = str(entry.get("ticker") or "").upper().strip()
+                cik = str(entry.get("cik_str") or "").zfill(10)
+                title = str(entry.get("title") or "").strip()
+                if t and cik:
+                    _SEC_CIK_CACHE[t] = (cik, title)
+            if sym in _SEC_CIK_CACHE:
+                return _SEC_CIK_CACHE[sym]
+    except Exception as exc:
+        logger.warning("[SEC] company_tickers 조회 실패 (ticker=%s): %s", sym, exc)
+
+    return None, None
+
+
+def _classify_sec_form(form: str, desc: str) -> str:
+    """SEC EDGAR 공시 양식(Form)을 초보자용 카테고리로 분류"""
+    f = form.upper().strip()
+    d = desc.lower()
+    if f in {"10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "40-F", "6-K"}:
+        return "정기보고서"
+    if f.startswith("8-K") and any(k in d for k in ("result", "earning", "financial", "quarter")):
+        return "실적"
+    if f in {"4", "3", "5", "144", "SC 13D", "SC 13G", "SC 13D/A", "SC 13G/A"}:
+        return "임원/주요주주"
+    if "14A" in f or "dividend" in d:
+        return "주주환원"
+    if "repurchase" in d or "buyback" in d:
+        return "자사주 취득"
+    return "기타 공시"
+
+
+def _format_sec_title(form: str, desc: str) -> str:
+    """SEC 공시 양식 코드를 한국어 설명과 함께 읽기 쉽게 표기"""
+    f = form.upper().strip()
+    label_map = {
+        "10-K": "연간 사업보고서 (Annual Report)",
+        "10-Q": "분기 보고서 (Quarterly Report)",
+        "8-K": "수시 공시 · 주요 경영사항 (Current Report)",
+        "4": "임원·주요주주 지분 변동 신고 (Insider Trading)",
+        "3": "최초 임원·주요주주 지분 신고",
+        "5": "연간 임원 지분 변동 신고",
+        "144": "임원·특수관계인 주식 매도 예정 신고",
+        "DEF 14A": "정기 주주총회 위임장 권유서 (Proxy Statement)",
+        "20-F": "외국기업 연간 사업보고서",
+        "6-K": "외국기업 수시 보고서",
+        "S-3": "유가증권 일괄신고서",
+        "25-NSE": "거래소 상장/변경 통지",
+    }
+    ko_desc = label_map.get(f)
+    if ko_desc:
+        return f"[Form {f}] {ko_desc}"
+    if desc and desc != f:
+        return f"[Form {f}] {desc}"
+    return f"[Form {f}] SEC 전자공시"
+
+
+def _fetch_sec_disclosures(ticker: str) -> dict[str, Any]:
+    """미국 종목의 SEC EDGAR 최근 공시 최대 20건을 조회"""
+    from urllib.parse import quote
+
+    sec_search_url = f"https://www.sec.gov/edgar/searchedgar/companysearch?q={quote(ticker)}"
+    cik, sec_company_name = _get_sec_company_info(ticker)
+    display_name = sec_company_name or ticker
+    sec_browse_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}" if cik else sec_search_url
+
+    disclosures: list[dict[str, Any]] = []
+    if cik:
+        try:
+            sub_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+            logger.info("[SEC] 최근 공시 API 접근 시작 (ticker=%s, cik=%s)", ticker, cik)
+            resp = requests.get(sub_url, headers=_SEC_HEADERS, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                payload = resp.json()
+                display_name = payload.get("name") or display_name
+                recent = (payload.get("filings") or {}).get("recent") or {}
+                forms = recent.get("form") or []
+                dates = recent.get("filingDate") or []
+                accs = recent.get("accessionNumber") or []
+                docs = recent.get("primaryDocument") or []
+                descs = recent.get("primaryDocDescription") or []
+
+                cik_int = str(int(cik))
+                limit = min(20, len(forms))
+                for idx in range(limit):
+                    form = str(forms[idx] or "").strip()
+                    filing_date = str(dates[idx] if idx < len(dates) else "").strip()
+                    acc_no = str(accs[idx] if idx < len(accs) else "").strip()
+                    primary_doc = str(docs[idx] if idx < len(docs) else "").strip()
+                    desc = str(descs[idx] if idx < len(descs) else "").strip()
+
+                    acc_clean = acc_no.replace("-", "")
+                    if acc_clean and primary_doc:
+                        doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_clean}/{primary_doc}"
+                    else:
+                        doc_url = sec_browse_url
+
+                    disclosures.append(
+                        {
+                            "id": acc_no or f"{ticker}-{idx}",
+                            "category": _classify_sec_form(form, desc),
+                            "title": _format_sec_title(form, desc),
+                            "datetime": filing_date,
+                            "author": "SEC EDGAR",
+                            "source": "SEC",
+                            "url": doc_url,
+                            "dart_url": sec_browse_url,
+                        }
+                    )
+                logger.info("[PARSE] SEC 공시 파싱 완료 (ticker=%s, 총 %d건)", ticker, len(disclosures))
+        except Exception as exc:
+            logger.warning("[SEC] submissions 조회 실패 (ticker=%s): %s", ticker, exc)
+
+    return {
+        "code": ticker,
+        "name": display_name,
+        "market": "US (SEC EDGAR)",
+        "is_us": True,
+        "source_type": "SEC",
+        "dart_links": {
+            "home": "https://www.sec.gov/edgar/searchedgar/companysearch",
+            "browse": sec_browse_url,
+            "corp_search": sec_browse_url,
+        },
+        "disclosures": disclosures,
+    }
+
+
 def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str, Any]:
     """종목의 최근 공시 20건을 카테고리별로 분류하고 DART(미국은 SEC) 바로가기 링크와 함께 반환"""
     from urllib.parse import quote
 
     detected_market, resolved_symbol = resolve_market_and_symbol(code_or_name, market_hint=market)
     if detected_market == "US":
-        ticker = resolved_symbol
-        sec_url = f"https://www.sec.gov/edgar/searchedgar/companysearch?q={quote(ticker)}"
-        return {
-            "code": ticker,
-            "name": ticker,
-            "market": "US (SEC EDGAR)",
-            "is_us": True,
-            "dart_links": {
-                "home": "https://www.sec.gov/edgar/searchedgar/companysearch",
-                "corp_search": sec_url,
-            },
-            "disclosures": [],
-        }
+        return _fetch_sec_disclosures(resolved_symbol)
 
     code = resolved_symbol
     basic = fetch_basic_info(code)
@@ -1082,6 +1217,8 @@ def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str,
         "code": code,
         "name": stock_name,
         "market": market,
+        "is_us": False,
+        "source_type": "DART",
         "dart_links": {
             "home": "https://dart.fss.or.kr/",
             "kospi": "https://dart.fss.or.kr/dsac001/mainY.do",
