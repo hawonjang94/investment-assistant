@@ -318,12 +318,49 @@ def is_us_ticker(code_or_name: Any, market: str | None = None) -> bool:
     text = str(code_or_name or "").strip()
     if not text:
         return False
-    # 6자리 숫자나 한글이 포함되면 무조건 국내 종목
-    if re.fullmatch(r"\d{6}", text) or re.search(r"[가-힣]", text):
+    # 6자리 숫자는 항상 국내 종목
+    if re.fullmatch(r"\d{6}", text):
         return False
+    # 사용자가 '미국 주식/ETF' 버튼을 선택한 경우 한글명('엔비디아' 등)도 미국으로 처리
     if market == "US":
         return True
+    if re.search(r"[가-힣]", text):
+        return False
     return bool(re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text))
+
+
+def resolve_us_ticker(code_or_name: Any) -> str:
+    """영문 티커 또는 한글 미국 종목명('엔비디아', '테슬라' 등)을 미국 티커('NVDA')로 변환"""
+    text = str(code_or_name or "").strip()
+    if not text:
+        raise ValueError("미국 종목 티커 또는 종목명을 입력해 주세요. (예: NVDA, 엔비디아)")
+
+    if re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text):
+        return text.upper()
+
+    logger.info("[NAVER] 한글 미국 종목명 -> 티커 검색 시작 (query=%s)", text)
+    try:
+        resp = requests.get(
+            "https://ac.stock.naver.com/ac",
+            params={"q": text, "target": "worldstock"},
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            items = [
+                item for item in (resp.json().get("items") or [])
+                if item.get("nationCode") == "USA" and item.get("code")
+            ]
+            if items:
+                exact = next((i for i in items if str(i.get("name", "")).strip().lower() == text.lower()), None)
+                matched = exact or items[0]
+                ticker = str(matched["code"]).strip().upper()
+                logger.info("[PARSE] 미국 종목명 매핑 완료 ('%s' -> %s)", text, ticker)
+                return ticker
+    except Exception as exc:
+        logger.warning("[NAVER] 미국 종목명 검색 실패 (%s): %s", text, exc)
+
+    raise ValueError(f"'{text}'에 해당하는 미국 종목을 찾을 수 없습니다. 영문 티커(예: NVDA, AAPL)로 입력해 주세요.")
 
 
 def fetch_kr_stock_type(code: str) -> str:
@@ -451,9 +488,7 @@ def _extract_yf_statement(df: pd.DataFrame, row_mapping: list[tuple[str, list[st
 
 def fetch_us_asset_data(ticker_input: Any) -> dict[str, Any]:
     """yfinance로 미국 주식(EQUITY) 또는 미국 ETF(ETF)의 시세, 설명, 재무/구성종목 수집"""
-    ticker = str(ticker_input or "").strip().upper()
-    if not ticker:
-        raise ValueError("미국 종목 티커를 입력해 주세요. (예: NVDA, AAPL, SPY)")
+    ticker = resolve_us_ticker(ticker_input)
 
     logger.info("[YFINANCE] 미국 종목 조회 시작 (ticker=%s)", ticker)
     t = yf.Ticker(ticker)
@@ -898,7 +933,7 @@ def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str,
     from urllib.parse import quote
 
     if is_us_ticker(code_or_name, market=market):
-        ticker = str(code_or_name).strip().upper()
+        ticker = resolve_us_ticker(code_or_name)
         sec_url = f"https://www.sec.gov/edgar/searchedgar/companysearch?q={quote(ticker)}"
         return {
             "code": ticker,
