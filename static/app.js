@@ -26,12 +26,62 @@ document.addEventListener("DOMContentLoaded", () => {
       if (val === null || val === undefined) return "-";
       return `${val}${unit}`;
     },
+    formatMarkdown(text) {
+      if (!text) return "";
+      // XSS 방지를 위한 HTML 이스케이프
+      let html = String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      // 코드 블록 및 인라인 코드
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      // 굵은 글씨 (**text**)
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+      // 줄 단위 변환 (제목, 구분선, 목록)
+      const lines = html.split("\n");
+      const out = [];
+      let inList = false;
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (/^---+$/.test(line)) {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push("<hr>");
+        } else if (/^###\s+(.+)$/.test(line)) {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push(`<h4>${line.replace(/^###\s+/, "")}</h4>`);
+        } else if (/^##\s+(.+)$/.test(line)) {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push(`<h3>${line.replace(/^##\s+/, "")}</h3>`);
+        } else if (/^[-*]\s+(.+)$/.test(line)) {
+          if (!inList) { out.push("<ul>"); inList = true; }
+          out.push(`<li>${line.replace(/^[-*]\s+/, "")}</li>`);
+        } else if (line === "") {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push('<div class="md-gap"></div>');
+        } else {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push(`<p>${line}</p>`);
+        }
+      }
+      if (inList) out.push("</ul>");
+      return out.join("");
+    },
+    setBubbleContent(bubble, role, text) {
+      if (role === "bot") {
+        bubble.innerHTML = this.formatMarkdown(text);
+      } else {
+        bubble.textContent = text;
+      }
+    },
     appendChatBubble(container, role, text) {
       const msgDiv = document.createElement("div");
       msgDiv.className = `chat-msg ${role}`;
       const bubble = document.createElement("div");
       bubble.className = "chat-bubble";
-      bubble.textContent = text;
+      this.setBubbleContent(bubble, role, text);
       msgDiv.appendChild(bubble);
       container.appendChild(msgDiv);
       container.scrollTop = container.scrollHeight;
@@ -140,7 +190,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       tab1ConversationId = data.conversation_id || tab1ConversationId;
-      loadingBubble.querySelector(".chat-bubble").textContent = data.answer || "(응답 내용이 없습니다.)";
+      window.InvestmentHelpers.setBubbleContent(
+        loadingBubble.querySelector(".chat-bubble"),
+        "bot",
+        data.answer || "(응답 내용이 없습니다.)"
+      );
+      tab1Messages.scrollTop = tab1Messages.scrollHeight;
 
       if (data.stock) {
         renderTab1Snapshot(data.stock);
@@ -574,7 +629,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       tab3ConversationId = data.conversation_id || tab3ConversationId;
-      loadingBubble.querySelector(".chat-bubble").textContent = data.answer || "(응답 내용이 없습니다.)";
+      window.InvestmentHelpers.setBubbleContent(
+        loadingBubble.querySelector(".chat-bubble"),
+        "bot",
+        data.answer || "(응답 내용이 없습니다.)"
+      );
+      tab3ChatMessages.scrollTop = tab3ChatMessages.scrollHeight;
       console.log("[CHAT]      Dify 챗봇 응답 렌더링 완료 (tab=tab3)");
     } catch (err) {
       loadingBubble.remove();

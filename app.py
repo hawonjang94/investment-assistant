@@ -230,4 +230,4 @@ def chat_technical():
 if __name__ == "__main__":
     debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
     logger.info("[SERVER] Flask 서버 시작 (debug=%s)", debug_mode)
-    app.run(host="127.0.0.1", port=5000, debug=debug_mode)
+    app.run(host="127.0.0.1", port=5000, debug=debug_mode, use_reloader=False)
