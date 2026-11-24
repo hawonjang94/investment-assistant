@@ -1014,9 +1014,25 @@ def _classify_disclosure(title: str) -> str:
 
 
 _SEC_HEADERS = {
-    "User-Agent": "InvestmentAssistant/1.0 (contact@example.com)",
+    "User-Agent": "InvestmentAssistant/1.0 (hawonjang94@users.noreply.github.com)",
 }
-_SEC_CIK_CACHE: dict[str, tuple[str, str]] = {}
+_SEC_CIK_CACHE: dict[str, tuple[str, str]] = {
+    "AAPL": ("0000320193", "Apple Inc."),
+    "NVDA": ("0001045810", "NVIDIA CORP"),
+    "MSFT": ("0000789019", "MICROSOFT CORP"),
+    "TSLA": ("0001318605", "Tesla, Inc."),
+    "AMZN": ("0001018724", "AMAZON COM INC"),
+    "GOOGL": ("0001652044", "Alphabet Inc."),
+    "GOOG": ("0001652044", "Alphabet Inc."),
+    "META": ("0001326801", "Meta Platforms, Inc."),
+    "AVGO": ("0001730168", "Broadcom Inc."),
+    "AMD": ("0000002488", "ADVANCED MICRO DEVICES INC"),
+    "NFLX": ("0001065280", "NETFLIX INC"),
+    "INTC": ("0000050863", "INTEL CORP"),
+    "QCOM": ("0000804328", "QUALCOMM INC/DE"),
+    "MU": ("0000723125", "MICRON TECHNOLOGY INC"),
+    "PLTR": ("0001321655", "Palantir Technologies Inc."),
+}
 
 
 def _get_sec_company_info(ticker: str) -> tuple[str | None, str | None]:
@@ -1144,6 +1160,32 @@ def _fetch_sec_disclosures(ticker: str) -> dict[str, Any]:
                 logger.info("[PARSE] SEC 공시 파싱 완료 (ticker=%s, 총 %d건)", ticker, len(disclosures))
         except Exception as exc:
             logger.warning("[SEC] submissions 조회 실패 (ticker=%s): %s", ticker, exc)
+
+    if not disclosures:
+        try:
+            sec_list = yf.Ticker(ticker).sec_filings or []
+            for idx, item in enumerate(sec_list[:20]):
+                form = str(item.get("type") or "").strip()
+                raw_date = item.get("date")
+                filing_date = raw_date.isoformat() if hasattr(raw_date, "isoformat") else str(raw_date or "").strip()
+                desc = str(item.get("title") or "").strip()
+                exhibits = item.get("exhibits") or {}
+                doc_url = exhibits.get(form) or item.get("edgarUrl") or sec_browse_url
+                disclosures.append(
+                    {
+                        "id": f"{ticker}-yf-{idx}",
+                        "category": _classify_sec_form(form, desc),
+                        "title": _format_sec_title(form, desc),
+                        "datetime": filing_date,
+                        "author": "SEC EDGAR",
+                        "source": "SEC",
+                        "url": doc_url,
+                        "dart_url": sec_browse_url,
+                    }
+                )
+            logger.info("[PARSE] yfinance SEC 공시 fallback 완료 (ticker=%s, 총 %d건)", ticker, len(disclosures))
+        except Exception as exc:
+            logger.warning("[SEC] yfinance fallback 실패 (ticker=%s): %s", ticker, exc)
 
     return {
         "code": ticker,
