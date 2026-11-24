@@ -114,8 +114,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let tab1CurrentCode = "";
 
   const tab1CodeInput = document.getElementById("tab1-code-input");
+  const tab1LoadBtn = document.getElementById("tab1-load-btn");
   const tab1ResetBtn = document.getElementById("tab1-reset-btn");
   const tab1QuickBtns = document.querySelectorAll(".tab1-quick");
+  const tab1LoadingData = document.getElementById("tab1-loading-data");
   const tab1ChatForm = document.getElementById("tab1-chat-form");
   const tab1QuestionInput = document.getElementById("tab1-question-input");
   const tab1SendBtn = document.getElementById("tab1-send-btn");
@@ -123,6 +125,112 @@ document.addEventListener("DOMContentLoaded", () => {
   const tab1Error = document.getElementById("tab1-error");
   const tab1SnapshotCard = document.getElementById("tab1-snapshot-card");
   const tab1PartialErrors = document.getElementById("tab1-partial-errors");
+  const tab1SuggestedList = document.getElementById("tab1-suggested-questions");
+  const tab1DetailsCard = document.getElementById("tab1-details-card");
+
+  let tab1LoadedDeepCode = "";
+  let tab1Charts = {
+    incomeBar: null,
+    incomeLine: null,
+    balanceBar: null,
+    balanceLine: null,
+    cashflowBar: null,
+    cashflowLine: null,
+  };
+  let tab1AllDisclosures = [];
+  let tab1ActiveCategory = "전체";
+  let tab1DiscExpanded = false;
+  let tab1DiscPage = 1;
+  const DISC_PAGE_SIZE = 5;
+
+  // 탭 1 내부 빠른 이동 앵커 활성화 표시
+  const subtabBtns = document.querySelectorAll(".subtab-btn");
+  subtabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      subtabBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+
+  let tab1Market = "KR";
+  const marketBtns = document.querySelectorAll(".market-btn");
+  const quickKrBox = document.getElementById("tab1-quick-kr");
+  const quickUsBox = document.getElementById("tab1-quick-us");
+
+  function setMarketMode(market) {
+    tab1Market = market === "US" ? "US" : "KR";
+    marketBtns.forEach((b) => {
+      b.classList.toggle("active", b.dataset.market === tab1Market);
+    });
+    if (tab1Market === "US") {
+      tab1CodeInput.placeholder = "미국 티커 입력 (예: AAPL, NVDA, SPY, SCHD)";
+      quickKrBox.classList.add("hidden");
+      quickUsBox.classList.remove("hidden");
+    } else {
+      tab1CodeInput.placeholder = "종목코드 6자리 또는 종목명 (예: 000660, KODEX 200)";
+      quickUsBox.classList.add("hidden");
+      quickKrBox.classList.remove("hidden");
+    }
+    console.log(`[MARKET]    시장 선택 전환 (${tab1Market})`);
+  }
+
+  marketBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setMarketMode(btn.dataset.market);
+    });
+  });
+
+  function getStockLabelForSuggestions(rawVal) {
+    const val = (rawVal || "").trim().toUpperCase();
+    if (!val) return "이 종목";
+    const quickMap = {
+      "000660": "SK하이닉스",
+      "005930": "삼성전자",
+      "069500": "KODEX 200",
+      "035420": "NAVER",
+      "NVDA": "엔비디아",
+      "AAPL": "애플",
+      "SPY": "SPY",
+      "SCHD": "SCHD",
+    };
+    return quickMap[val] || rawVal.trim();
+  }
+
+  function renderSuggestedQuestions(stockLabel) {
+    const label = getStockLabelForSuggestions(stockLabel);
+    const questions = [
+      `📊 ${label} 핵심 지표와 밸류에이션(PER·PBR) 요약해줘`,
+      `📈 ${label} 최근 실적 추이와 수익성(영업이익률·ROE) 분석해줘`,
+      `📰 ${label} 최신 뉴스와 최근 업데이트 이슈 정리해줘`,
+      `⚠️ ${label} 현재 기회 요인과 위험 요인은 뭐야?`,
+    ];
+
+    tab1SuggestedList.innerHTML = "";
+    questions.forEach((q) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "suggested-btn";
+      btn.textContent = q;
+      btn.addEventListener("click", () => {
+        if (tab1SendBtn.disabled) return;
+        tab1QuestionInput.value = q;
+        tab1ChatForm.requestSubmit();
+      });
+      tab1SuggestedList.appendChild(btn);
+    });
+  }
+
+  // 초기 추천 질문 렌더링 및 입력창 변경 시 시장 자동 인식 + 추천 질문 반영
+  renderSuggestedQuestions(tab1CodeInput.value);
+  tab1CodeInput.addEventListener("input", () => {
+    const raw = tab1CodeInput.value.trim();
+    if (/^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$/.test(raw)) {
+      if (tab1Market !== "US") setMarketMode("US");
+    } else if (/^\d{6}$/.test(raw) || /[가-힣]/.test(raw)) {
+      if (tab1Market !== "KR") setMarketMode("KR");
+    }
+    renderSuggestedQuestions(raw);
+  });
 
   function resetTab1Chat(noticeText = "새 대화를 시작했습니다. 종목과 질문을 입력해 주세요.") {
     tab1ConversationId = null;
@@ -133,13 +241,84 @@ document.addEventListener("DOMContentLoaded", () => {
 
   tab1ResetBtn.addEventListener("click", () => resetTab1Chat());
 
+  async function loadTab1DeepInfo(code, includeBasicFetch = false) {
+    const cleanCode = (code || "").trim();
+    if (!cleanCode) return;
+
+    tab1LoadingData.classList.remove("hidden");
+    tab1Error.classList.add("hidden");
+
+    try {
+      const requests = [
+        fetch("/api/financials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+        }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d }))),
+        fetch("/api/disclosures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+        }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d }))),
+      ];
+
+      if (includeBasicFetch) {
+        requests.push(
+          fetch("/fetch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: cleanCode, market: tab1Market }),
+          }).then((r) => r.json().then((d) => ({ ok: r.ok, data: d })))
+        );
+      }
+
+      const results = await Promise.all(requests);
+      const finRes = results[0];
+      const discRes = results[1];
+      const fetchRes = includeBasicFetch ? results[2] : null;
+
+      if (fetchRes && fetchRes.ok) {
+        renderTab1Snapshot(fetchRes.data);
+      } else if (finRes && !finRes.ok) {
+        throw new Error(finRes.data.error || "종목 정보를 불러오지 못했습니다.");
+      }
+
+      if (finRes && finRes.ok) {
+        renderTab1CorpAndStatements(finRes.data);
+        tab1LoadedDeepCode = cleanCode;
+      }
+      if (discRes && discRes.ok) {
+        renderTab1DisclosuresSection(discRes.data);
+      }
+    } catch (err) {
+      tab1Error.textContent = err.message;
+      tab1Error.classList.remove("hidden");
+      console.error(`[ERROR]     심층분석 데이터 조회 오류 (${err.message})`);
+    } finally {
+      tab1LoadingData.classList.add("hidden");
+    }
+  }
+
+  tab1LoadBtn.addEventListener("click", () => {
+    const code = tab1CodeInput.value.trim();
+    if (!code) return;
+    loadTab1DeepInfo(code, true);
+  });
+
   tab1QuickBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       const code = btn.dataset.code || "";
+      const market = btn.dataset.market || "KR";
+      setMarketMode(market);
       tab1CodeInput.value = code;
-      resetTab1Chat(`${btn.textContent} 선택 완료! 궁금한 점을 질문해 주세요.`);
+      renderSuggestedQuestions(code);
+      resetTab1Chat(`${btn.textContent} 선택 완료! 아래 추천 질문을 누르거나 직접 질문해 주세요.`);
+      loadTab1DeepInfo(code, true);
     });
   });
+
+  // 초기 접속 시 기본 종목(000660 SK하이닉스) 데이터·재무분석·공시 즉시 로드
+  loadTab1DeepInfo(tab1CodeInput.value || "000660", true);
 
   tab1ChatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -171,6 +350,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     tab1SendBtn.disabled = true;
     tab1SendBtn.textContent = "분석 중...";
+    tab1SuggestedList.querySelectorAll(".suggested-btn").forEach((b) => { b.disabled = true; });
     console.log(`[CHAT]      Dify 챗봇 요청 시작 (tab=tab1, code=${code})`);
 
     try {
@@ -179,6 +359,7 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code,
+          market: tab1Market,
           question,
           conversation_id: tab1ConversationId,
         }),
@@ -199,6 +380,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (data.stock) {
         renderTab1Snapshot(data.stock);
+        if (tab1LoadedDeepCode !== data.stock.code) {
+          loadTab1DeepInfo(data.stock.code, false);
+        }
       }
       console.log("[CHAT]      Dify 챗봇 응답 렌더링 완료 (tab=tab1)");
     } catch (err) {
@@ -209,19 +393,31 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       tab1SendBtn.disabled = false;
       tab1SendBtn.textContent = "질문 전송";
+      tab1SuggestedList.querySelectorAll(".suggested-btn").forEach((b) => { b.disabled = false; });
     }
   });
 
   function renderTab1Snapshot(stock) {
     const { formatPrice, formatKoreanWon, formatUnit } = window.InvestmentHelpers;
     const snap = stock.snapshot || {};
+    const isUsd = stock.currency === "USD";
+    const fmtMoney = (v) => (v === null || v === undefined ? "-" : isUsd ? `$${Number(v).toLocaleString("en-US")}` : formatPrice(v));
+    const fmtMcap = (v) => {
+      if (v === null || v === undefined) return "-";
+      if (!isUsd) return formatKoreanWon(v);
+      return v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(2)}B` : `$${(v / 1_000_000).toFixed(1)}M`;
+    };
+
+    if (stock.name) {
+      renderSuggestedQuestions(stock.name);
+    }
 
     document.getElementById("tab1-stock-name").textContent = stock.name || "-";
-    document.getElementById("tab1-stock-code").textContent = stock.code || "-";
+    document.getElementById("tab1-stock-code").textContent = `${stock.code || "-"}${stock.is_etf ? " · ETF" : ""}`;
 
     const priceEl = document.getElementById("tab1-price");
     const rateEl = document.getElementById("tab1-rate");
-    priceEl.textContent = formatPrice(snap.current_price);
+    priceEl.textContent = fmtMoney(snap.current_price);
     priceEl.className = "current-price";
     rateEl.className = "change-rate";
 
@@ -238,10 +434,17 @@ document.addEventListener("DOMContentLoaded", () => {
       rateEl.classList.add("flat");
     }
 
-    document.getElementById("tab1-mcap").textContent = formatKoreanWon(snap.market_cap);
+    document.getElementById("tab1-mcap").textContent = fmtMcap(snap.market_cap);
     document.getElementById("tab1-per").textContent = `${formatUnit(snap.per, "배")} / ${formatUnit(snap.estimated_per, "배")}`;
     document.getElementById("tab1-pbr").textContent = formatUnit(snap.pbr, "배");
+    document.getElementById("tab1-foreign").textContent = formatUnit(snap.foreign_rate, "%");
+    document.getElementById("tab1-dividend").textContent = formatUnit(snap.dividend_yield, "%");
+    document.getElementById("tab1-52w").textContent = `${fmtMoney(snap.high_52w)} / ${fmtMoney(snap.low_52w)}`;
     document.getElementById("tab1-news-count").textContent = `${(stock.news || []).length}건`;
+    document.getElementById("tab1-updated-at").textContent = new Date().toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
     const errors = stock.errors || [];
     if (errors.length > 0) {
@@ -252,6 +455,87 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     tab1SnapshotCard.classList.remove("hidden");
+
+    // 핵심 실적 업데이트 내역 테이블 렌더링
+    const finTbody = document.getElementById("tab1-financials-tbody");
+    finTbody.innerHTML = "";
+    const financials = stock.financials || [];
+    if (financials.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.style.textAlign = "center";
+      td.textContent = "표시할 실적 데이터가 없습니다.";
+      tr.appendChild(td);
+      finTbody.appendChild(tr);
+    } else {
+      financials.forEach((row) => {
+        const tr = document.createElement("tr");
+        if (row.is_consensus) tr.classList.add("consensus-row");
+
+        const periodTd = document.createElement("td");
+        periodTd.textContent = row.period || "-";
+        tr.appendChild(periodTd);
+
+        const typeTd = document.createElement("td");
+        const badge = document.createElement("span");
+        badge.className = row.is_consensus ? "consensus-badge" : "actual-badge";
+        badge.textContent = row.is_consensus ? "추정(E)" : "확정";
+        typeTd.appendChild(badge);
+        tr.appendChild(typeTd);
+
+        [
+          formatKoreanWon(row.revenue),
+          formatKoreanWon(row.operating_income),
+          formatUnit(row.operating_margin, "%"),
+          formatUnit(row.roe, "%"),
+        ].forEach((txt) => {
+          const td = document.createElement("td");
+          td.textContent = txt;
+          tr.appendChild(td);
+        });
+
+        finTbody.appendChild(tr);
+      });
+    }
+
+    // 관련 최신 뉴스 링크 리스트 렌더링 (제목 + 클릭 시 새 창 바로 이동)
+    const newsUl = document.getElementById("tab1-news-list");
+    newsUl.innerHTML = "";
+    const newsList = stock.news || [];
+    if (newsList.length === 0) {
+      const li = document.createElement("li");
+      li.className = "news-item";
+      li.textContent = "수집된 최신 뉴스가 없습니다.";
+      newsUl.appendChild(li);
+    } else {
+      newsList.forEach((item) => {
+        const li = document.createElement("li");
+        li.className = "news-item";
+
+        const link = document.createElement("a");
+        link.className = "news-title";
+        link.href = item.url || "#";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = `${item.title || "(제목 없음)"} ↗`;
+
+        const snippet = document.createElement("p");
+        snippet.className = "news-snippet";
+        snippet.textContent = item.snippet || "";
+
+        const meta = document.createElement("span");
+        meta.className = "news-meta";
+        meta.textContent = item.date ? `발행일: ${item.date}` : "";
+
+        li.appendChild(link);
+        li.appendChild(snippet);
+        li.appendChild(meta);
+        newsUl.appendChild(li);
+      });
+    }
+
+    tab1DetailsCard.classList.remove("hidden");
   }
 
   // ================= 4. 탭 2: 리밸런싱 도우미 (Dify 없음 - 순수 Python 계산) =================
@@ -646,4 +930,419 @@ document.addEventListener("DOMContentLoaded", () => {
       tab3SendBtn.textContent = "지표 해석 요청";
     }
   });
+
+  // ================= 6. 탭 1 내부: 기업설명 + 재무분석(3대 표) + 최근 공시 =================
+  function renderStatementTable(tableId, stmt) {
+    const table = document.getElementById(tableId);
+    table.innerHTML = "";
+    const periods = stmt.periods || [];
+    const rows = stmt.rows || [];
+
+    if (periods.length === 0 || rows.length === 0) {
+      table.innerHTML = "<tbody><tr><td style='text-align:center'>표시할 재무 데이터가 없습니다.</td></tr></tbody>";
+      return;
+    }
+
+    const thead = document.createElement("thead");
+    const headTr = document.createElement("tr");
+    const firstTh = document.createElement("th");
+    firstTh.textContent = "계정명 (억원)";
+    headTr.appendChild(firstTh);
+    periods.forEach((p) => {
+      const th = document.createElement("th");
+      th.textContent = p;
+      headTr.appendChild(th);
+    });
+    thead.appendChild(headTr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const nameTd = document.createElement("td");
+      nameTd.textContent = row.name;
+      tr.appendChild(nameTd);
+
+      row.values.forEach((val) => {
+        const td = document.createElement("td");
+        td.textContent = val === null || val === undefined ? "-" : Number(val).toLocaleString("ko-KR");
+        if (val !== null && val < 0) td.style.color = "#3182f6";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  }
+
+  function renderStatementDualCharts(barKey, lineKey, barCanvasId, lineCanvasId, stmt, targetKeywords, colors) {
+    const periods = stmt.periods || [];
+    const rows = stmt.rows || [];
+
+    const barDatasets = [];
+    const lineDatasets = [];
+
+    targetKeywords.forEach((kw, idx) => {
+      const found = rows.find((r) => r.name.includes(kw));
+      if (found) {
+        const color = colors[idx % colors.length];
+        barDatasets.push({
+          label: found.name,
+          data: found.values,
+          backgroundColor: color,
+          borderRadius: 6,
+        });
+        lineDatasets.push({
+          label: found.name,
+          data: found.values,
+          borderColor: color,
+          backgroundColor: color,
+          borderWidth: 2.5,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0.25,
+          fill: false,
+        });
+      }
+    });
+
+    // 왼쪽: 막대그래프
+    const barCtx = document.getElementById(barCanvasId).getContext("2d");
+    if (tab1Charts[barKey]) tab1Charts[barKey].destroy();
+    tab1Charts[barKey] = new Chart(barCtx, {
+      type: "bar",
+      data: { labels: periods, datasets: barDatasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } },
+      },
+    });
+
+    // 오른쪽: 꺾은선형 차트
+    const lineCtx = document.getElementById(lineCanvasId).getContext("2d");
+    if (tab1Charts[lineKey]) tab1Charts[lineKey].destroy();
+    tab1Charts[lineKey] = new Chart(lineCtx, {
+      type: "line",
+      data: { labels: periods, datasets: lineDatasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } },
+      },
+    });
+  }
+
+  // 그래프 아래 상세 표 펼치기/접기 토글 버튼 (중복 텍스트 없이 data-title 기반 고정)
+  document.querySelectorAll(".toggle-table-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetId = btn.dataset.target;
+      const wrap = document.getElementById(targetId);
+      if (!wrap) return;
+      const isHidden = wrap.classList.toggle("hidden");
+      const baseTitle = btn.dataset.title || "📋 전체 표";
+      btn.textContent = isHidden ? `${baseTitle} 보기 ▼` : `${baseTitle} 접기 ▲`;
+    });
+  });
+
+  let tab1EtfHoldingsChart = null;
+
+  function renderTab1EtfSection(data) {
+    const etf = data.etf_info || {};
+    document.getElementById("tab1-etf-base-badge").textContent = `기초지수: ${etf.base_index || "-"}`;
+    document.getElementById("tab1-etf-issuer").textContent = etf.issuer || "-";
+    document.getElementById("tab1-etf-nav").textContent = etf.total_nav || "-";
+    document.getElementById("tab1-etf-fee").textContent =
+      etf.total_fee !== null && etf.total_fee !== undefined ? `${etf.total_fee}%` : "-";
+    document.getElementById("tab1-etf-div").textContent =
+      etf.dividend_yield !== null && etf.dividend_yield !== undefined ? `${etf.dividend_yield}%` : "-";
+    document.getElementById("tab1-etf-dev").textContent =
+      etf.deviation_rate !== null && etf.deviation_rate !== undefined ? `${etf.deviation_rate}%` : "-";
+    document.getElementById("tab1-etf-ret1y").textContent =
+      etf.return_1y !== null && etf.return_1y !== undefined ? `${etf.return_1y}%` : "-";
+
+    const holdings = etf.holdings || [];
+    const tbody = document.getElementById("tab1-etf-holdings-tbody");
+    tbody.innerHTML = "";
+
+    if (holdings.length === 0) {
+      tbody.innerHTML = "<tr><td colspan='3' style='text-align:center'>구성종목 정보가 없습니다.</td></tr>";
+    } else {
+      holdings.forEach((h) => {
+        const tr = document.createElement("tr");
+        const nameTd = document.createElement("td");
+        nameTd.textContent = h.name;
+        const codeTd = document.createElement("td");
+        codeTd.textContent = h.code || "-";
+        const wTd = document.createElement("td");
+        wTd.textContent = `${h.weight}%`;
+        wTd.style.fontWeight = "700";
+        wTd.style.color = "#1d4ed8";
+        tr.appendChild(nameTd);
+        tr.appendChild(codeTd);
+        tr.appendChild(wTd);
+        tbody.appendChild(tr);
+      });
+    }
+
+    const ctx = document.getElementById("tab1-etf-holdings-chart").getContext("2d");
+    if (tab1EtfHoldingsChart) tab1EtfHoldingsChart.destroy();
+    tab1EtfHoldingsChart = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: holdings.map((h) => `${h.name} (${h.weight}%)`),
+        datasets: [
+          {
+            data: holdings.map((h) => h.weight),
+            backgroundColor: [
+              "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd",
+              "#0f766e", "#10b981", "#f59e0b", "#64748b", "#94a3b8",
+            ],
+            borderWidth: 2,
+            borderColor: "#ffffff",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 11 } } },
+      },
+    });
+  }
+
+  function renderTab1CorpAndStatements(data) {
+    const descBox = document.getElementById("tab1-descriptions");
+    descBox.innerHTML = "";
+    const descs = data.descriptions || [];
+    if (descs.length === 0) {
+      descBox.innerHTML = "<p>등록된 종목 설명이 없습니다.</p>";
+    } else {
+      descs.forEach((text) => {
+        const p = document.createElement("p");
+        p.textContent = `• ${text}`;
+        descBox.appendChild(p);
+      });
+    }
+
+    const etfPanel = document.getElementById("subtab-etf");
+    const finPanel = document.getElementById("subtab-finance");
+    const discPanel = document.getElementById("subtab-disclosure");
+
+    if (data.is_etf) {
+      etfPanel.classList.remove("hidden");
+      finPanel.classList.add("hidden");
+      discPanel.classList.add("hidden");
+      renderTab1EtfSection(data);
+    } else {
+      etfPanel.classList.add("hidden");
+      finPanel.classList.remove("hidden");
+      discPanel.classList.remove("hidden");
+
+      const stmts = data.statements || {};
+      const income = stmts.income || {};
+      const balance = stmts.balance || {};
+      const cashflow = stmts.cashflow || {};
+
+      renderStatementTable("tab1-income-table", income);
+      renderStatementDualCharts(
+        "incomeBar",
+        "incomeLine",
+        "tab1-income-bar-chart",
+        "tab1-income-line-chart",
+        income,
+        ["매출액", "영업이익", "당기순이익"],
+        ["rgba(29, 78, 216, 0.85)", "rgba(225, 29, 72, 0.85)", "rgba(16, 185, 129, 0.9)"]
+      );
+
+      renderStatementTable("tab1-balance-table", balance);
+      renderStatementDualCharts(
+        "balanceBar",
+        "balanceLine",
+        "tab1-balance-bar-chart",
+        "tab1-balance-line-chart",
+        balance,
+        ["자산총계", "부채총계", "자본총계"],
+        ["rgba(29, 78, 216, 0.85)", "rgba(245, 158, 11, 0.9)", "rgba(16, 185, 129, 0.9)"]
+      );
+
+      renderStatementTable("tab1-cashflow-table", cashflow);
+      renderStatementDualCharts(
+        "cashflowBar",
+        "cashflowLine",
+        "tab1-cashflow-bar-chart",
+        "tab1-cashflow-line-chart",
+        cashflow,
+        ["영업활동", "투자활동", "재무활동"],
+        ["rgba(16, 185, 129, 0.9)", "rgba(225, 29, 72, 0.85)", "rgba(139, 92, 246, 0.9)"]
+      );
+    }
+
+    tab1SnapshotCard.classList.remove("hidden");
+    tab1DetailsCard.classList.remove("hidden");
+  }
+
+  function renderTab1DisclosuresSection(data) {
+    tab1AllDisclosures = data.disclosures || [];
+    tab1ActiveCategory = "전체";
+    tab1DiscExpanded = false;
+    tab1DiscPage = 1;
+
+    document.getElementById("tab1-disc-title").textContent = `${data.name} (${data.code}) 최근 공시`;
+    document.getElementById("tab1-market-badge").textContent = data.market || "KOSPI";
+
+    const dartCorpLink = document.getElementById("tab1-dart-corp-link");
+    if (data.dart_links?.corp_search) {
+      dartCorpLink.href = data.dart_links.corp_search;
+      dartCorpLink.textContent = `${data.name} DART 공시검색 ↗`;
+      dartCorpLink.classList.remove("hidden");
+    }
+
+    renderTab1CategoryFilters();
+    renderTab1Disclosures();
+    tab1DetailsCard.classList.remove("hidden");
+  }
+
+  document.getElementById("tab1-disc-toggle-btn").addEventListener("click", () => {
+    tab1DiscExpanded = !tab1DiscExpanded;
+    tab1DiscPage = 1;
+    renderTab1Disclosures();
+  });
+
+  function renderTab1CategoryFilters() {
+    const categories = [
+      "전체",
+      "정기보고서",
+      "실적",
+      "자사주 취득",
+      "자사주 처분",
+      "주주환원",
+      "임원/주요주주",
+      "기타 공시",
+    ];
+    const bar = document.getElementById("tab1-category-filters");
+    bar.innerHTML = "";
+
+    categories.forEach((cat) => {
+      const count =
+        cat === "전체"
+          ? tab1AllDisclosures.length
+          : tab1AllDisclosures.filter((d) => d.category === cat).length;
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `filter-chip ${tab1ActiveCategory === cat ? "active" : ""}`;
+      btn.textContent = `${cat} (${count})`;
+      btn.addEventListener("click", () => {
+        tab1ActiveCategory = cat;
+        tab1DiscPage = 1;
+        renderTab1CategoryFilters();
+        renderTab1Disclosures();
+      });
+      bar.appendChild(btn);
+    });
+  }
+
+  function renderTab1Disclosures() {
+    const ul = document.getElementById("tab1-disclosure-list");
+    const paginationBar = document.getElementById("tab1-disc-pagination");
+    const toggleBtn = document.getElementById("tab1-disc-toggle-btn");
+
+    ul.innerHTML = "";
+    paginationBar.innerHTML = "";
+
+    const filtered =
+      tab1ActiveCategory === "전체"
+        ? tab1AllDisclosures
+        : tab1AllDisclosures.filter((d) => d.category === tab1ActiveCategory);
+
+    if (filtered.length === 0) {
+      paginationBar.classList.add("hidden");
+      toggleBtn.classList.add("hidden");
+      const li = document.createElement("li");
+      li.className = "news-item";
+      li.textContent = `'${tab1ActiveCategory}' 분류에 해당하는 최근 공시가 없습니다.`;
+      ul.appendChild(li);
+      return;
+    }
+
+    const totalPages = Math.ceil(filtered.length / DISC_PAGE_SIZE);
+    if (tab1DiscPage > totalPages) tab1DiscPage = totalPages;
+
+    let visibleItems = [];
+    if (!tab1DiscExpanded) {
+      visibleItems = filtered.slice(0, DISC_PAGE_SIZE);
+      paginationBar.classList.add("hidden");
+    } else {
+      const startIdx = (tab1DiscPage - 1) * DISC_PAGE_SIZE;
+      visibleItems = filtered.slice(startIdx, startIdx + DISC_PAGE_SIZE);
+
+      // 하단 1, 2, 3... 페이지 번호 버튼 생성
+      if (totalPages > 1) {
+        for (let p = 1; p <= totalPages; p++) {
+          const pBtn = document.createElement("button");
+          pBtn.type = "button";
+          pBtn.className = `page-btn ${p === tab1DiscPage ? "active" : ""}`;
+          pBtn.textContent = String(p);
+          pBtn.addEventListener("click", () => {
+            tab1DiscPage = p;
+            renderTab1Disclosures();
+          });
+          paginationBar.appendChild(pBtn);
+        }
+        paginationBar.classList.remove("hidden");
+      } else {
+        paginationBar.classList.add("hidden");
+      }
+    }
+
+    // 5개 초과일 때만 전체 보기 / 접기 버튼 표시
+    if (filtered.length > DISC_PAGE_SIZE) {
+      toggleBtn.classList.remove("hidden");
+      toggleBtn.textContent = tab1DiscExpanded
+        ? "📑 공시 5개만 보기 ▲"
+        : `📑 전체 공시 보기 (총 ${filtered.length}건 · 페이지 이동) ▼`;
+    } else {
+      toggleBtn.classList.add("hidden");
+    }
+
+    visibleItems.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "news-item";
+
+      const badge = document.createElement("span");
+      badge.className = "disc-cat-badge";
+      badge.textContent = item.category;
+
+      const link = document.createElement("a");
+      link.className = "news-title";
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `${item.title} ↗`;
+
+      const actions = document.createElement("div");
+      actions.className = "disc-actions";
+
+      const meta = document.createElement("span");
+      meta.className = "news-meta";
+      meta.textContent = `${item.datetime} · ${item.author}`;
+
+      const dartLink = document.createElement("a");
+      dartLink.className = "disc-dart-link";
+      dartLink.href = item.dart_url;
+      dartLink.target = "_blank";
+      dartLink.rel = "noopener noreferrer";
+      dartLink.textContent = "DART에서 전체공시 보기 ↗";
+
+      actions.appendChild(meta);
+      actions.appendChild(dartLink);
+
+      li.appendChild(badge);
+      li.appendChild(link);
+      li.appendChild(actions);
+      ul.appendChild(li);
+    });
+  }
 });

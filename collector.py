@@ -3,7 +3,9 @@ import os
 import re
 from typing import Any
 
+import pandas as pd
 import requests
+import yfinance as yf
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -311,7 +313,271 @@ def fetch_financials(code: str) -> list[dict[str, Any]]:
     return financials
 
 
-def fetch_news(stock_name: str, num: int = 5) -> list[dict[str, Any]]:
+def is_us_ticker(code_or_name: Any, market: str | None = None) -> bool:
+    """입력값과 시장 선택을 보고 미국 주식/ETF 티커인지 판별"""
+    text = str(code_or_name or "").strip()
+    if not text:
+        return False
+    # 6자리 숫자나 한글이 포함되면 무조건 국내 종목
+    if re.fullmatch(r"\d{6}", text) or re.search(r"[가-힣]", text):
+        return False
+    if market == "US":
+        return True
+    return bool(re.fullmatch(r"[A-Za-z]{1,5}(?:[.-][A-Za-z]{1,2})?", text))
+
+
+def fetch_kr_stock_type(code: str) -> str:
+    """네이버 basic API에서 국내 종목 유형('etf' | 'stock') 확인"""
+    try:
+        r = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/basic",
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r.status_code == 200:
+            return str(r.json().get("stockEndType") or "stock").lower()
+    except Exception:
+        pass
+    return "stock"
+
+
+def fetch_kr_etf_info(code: str) -> dict[str, Any]:
+    """네이버 금융 ETF 전용 API(api/etf/{code}/basic)에서 ETF 핵심정보 및 구성종목 TOP 10 수집"""
+    url = f"https://m.stock.naver.com/api/etf/{code}/basic"
+    logger.info("[NAVER] 국내 ETF 전용 API 접근 시작 (code=%s)", code)
+
+    try:
+        resp = requests.get(url, headers=NAVER_HEADERS, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout as exc:
+        raise RuntimeError("네이버 ETF 정보 응답 시간이 초과되었습니다.") from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(f"네이버 ETF 네트워크 연결에 실패했습니다: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"네이버 ETF 정보를 불러오지 못했습니다. (HTTP {resp.status_code})")
+
+    d = resp.json()
+    current_price = clean_number(d.get("closePrice"))
+    change_rate = clean_number(d.get("fluctuationsRatio"))
+    price_state = (d.get("compareToPreviousPrice") or {}).get("code")
+    if change_rate is not None and price_state in {"4", "5"} and change_rate > 0:
+        change_rate = -change_rate
+
+    snapshot = {
+        "current_price": current_price,
+        "change_rate": change_rate,
+        "market_cap": parse_korean_amount(d.get("totalNav") or d.get("marketValue")),
+        "per": None,
+        "pbr": None,
+        "estimated_per": None,
+        "foreign_rate": clean_number(d.get("foreignRate")),
+        "dividend_yield": clean_number(d.get("dividendYieldTtm")),
+        "high_52w": clean_number(d.get("highPriceOf52Weeks")),
+        "low_52w": clean_number(d.get("lowPriceOf52Weeks")),
+    }
+
+    holdings: list[dict[str, Any]] = []
+    for item in (d.get("constituentList") or [])[:10]:
+        holdings.append(
+            {
+                "code": item.get("itemCode") or "",
+                "name": item.get("itemName") or "-",
+                "weight": round(float(item.get("constituentWeight") or 0), 2),
+            }
+        )
+
+    summary = str(d.get("etfSummary") or "").strip()
+    descriptions = [summary] if summary else []
+
+    etf_info = {
+        "issuer": d.get("issuerName") or "-",
+        "base_index": d.get("etfBaseIndex") or "-",
+        "total_nav": d.get("totalNav") or d.get("marketValue") or "-",
+        "total_fee": d.get("totalFee"),
+        "nav": clean_number(d.get("nav")),
+        "deviation_rate": d.get("deviationRate"),
+        "dividend_yield": d.get("dividendYieldTtm"),
+        "dividend_per_share": d.get("dividendPerShareTtm"),
+        "return_1m": d.get("returnRate1m"),
+        "return_3m": d.get("returnRate3m"),
+        "return_1y": d.get("returnRate1y"),
+        "holdings": holdings,
+    }
+
+    logger.info("[PARSE] 국내 ETF 파싱 완료 (name=%s, holdings=%d개)", d.get("stockName"), len(holdings))
+    return {
+        "code": code,
+        "name": d.get("stockName") or code,
+        "market": "KR",
+        "currency": "KRW",
+        "is_etf": True,
+        "descriptions": descriptions,
+        "snapshot": snapshot,
+        "etf_info": etf_info,
+    }
+
+
+def _extract_yf_statement(df: pd.DataFrame, row_mapping: list[tuple[str, list[str]]]) -> dict[str, Any]:
+    """yfinance 재무제표 DataFrame을 억원/백만달러($M) 기준 표 구조로 변환"""
+    if df is None or df.empty:
+        return {"periods": [], "rows": []}
+
+    cols = list(df.columns)[:4]
+    cols_sorted = sorted(cols)  # 과거 -> 최신 순 정렬
+    periods = [c.strftime("%Y/%m") if hasattr(c, "strftime") else str(c)[:7] for c in cols_sorted]
+
+    rows: list[dict[str, Any]] = []
+    for kor_label, candidates in row_mapping:
+        matched_key = next((k for k in candidates if k in df.index), None)
+        if not matched_key:
+            continue
+
+        values: list[float | None] = []
+        has_any = False
+        for col in cols_sorted:
+            val = df.loc[matched_key, col]
+            if pd.isna(val):
+                values.append(None)
+            else:
+                # 백만 달러($M) 단위로 반올림
+                values.append(round(float(val) / 1_000_000, 1))
+                has_any = True
+
+        if has_any:
+            rows.append({"name": kor_label, "values": values})
+
+    return {"periods": periods, "rows": rows}
+
+
+def fetch_us_asset_data(ticker_input: Any) -> dict[str, Any]:
+    """yfinance로 미국 주식(EQUITY) 또는 미국 ETF(ETF)의 시세, 설명, 재무/구성종목 수집"""
+    ticker = str(ticker_input or "").strip().upper()
+    if not ticker:
+        raise ValueError("미국 종목 티커를 입력해 주세요. (예: NVDA, AAPL, SPY)")
+
+    logger.info("[YFINANCE] 미국 종목 조회 시작 (ticker=%s)", ticker)
+    t = yf.Ticker(ticker)
+
+    try:
+        info = t.info or {}
+    except Exception as exc:
+        raise RuntimeError(f"미국 종목({ticker}) 정보를 불러오는 중 오류가 발생했습니다: {exc}") from exc
+
+    quote_type = str(info.get("quoteType") or "").upper()
+    name = info.get("shortName") or info.get("longName") or ticker
+    current_price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+
+    if current_price is None and not info.get("marketCap") and not info.get("totalAssets"):
+        raise ValueError(f"미국 종목 티커 '{ticker}'를 찾을 수 없습니다. 철자를 확인해 주세요.")
+
+    prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+    change_rate = None
+    if current_price is not None and prev_close:
+        try:
+            change_rate = round(((float(current_price) - float(prev_close)) / float(prev_close)) * 100, 2)
+        except Exception:
+            change_rate = None
+
+    is_etf = quote_type in {"ETF", "MUTUALFUND"}
+    raw_div = info.get("dividendYield")
+    # yfinance는 2.95처럼 % 단위 또는 0.0295처럼 소수 단위로 줄 수 있음
+    div_pct = None
+    if raw_div is not None:
+        div_val = float(raw_div)
+        div_pct = round(div_val * 100, 2) if div_val < 0.25 else round(div_val, 2)
+
+    snapshot = {
+        "current_price": round(float(current_price), 2) if current_price is not None else None,
+        "change_rate": change_rate,
+        "market_cap": info.get("totalAssets") if is_etf else info.get("marketCap"),
+        "per": round(float(info["trailingPE"]), 2) if info.get("trailingPE") else None,
+        "estimated_per": round(float(info["forwardPE"]), 2) if info.get("forwardPE") else None,
+        "pbr": round(float(info["priceToBook"]), 2) if info.get("priceToBook") else None,
+        "foreign_rate": None,
+        "dividend_yield": div_pct,
+        "high_52w": round(float(info["fiftyTwoWeekHigh"]), 2) if info.get("fiftyTwoWeekHigh") else None,
+        "low_52w": round(float(info["fiftyTwoWeekLow"]), 2) if info.get("fiftyTwoWeekLow") else None,
+    }
+
+    summary = str(info.get("longBusinessSummary") or "").strip()
+    descriptions = [summary[:450] + ("..." if len(summary) > 450 else "")] if summary else []
+
+    result: dict[str, Any] = {
+        "code": ticker,
+        "name": name,
+        "market": "US",
+        "currency": "USD",
+        "is_etf": is_etf,
+        "descriptions": descriptions,
+        "snapshot": snapshot,
+    }
+
+    if is_etf:
+        holdings: list[dict[str, Any]] = []
+        try:
+            top_h = t.funds_data.top_holdings
+            if top_h is not None and not top_h.empty:
+                for sym, row in top_h.head(10).iterrows():
+                    holdings.append(
+                        {
+                            "code": str(sym),
+                            "name": str(row.get("Name") or sym),
+                            "weight": round(float(row.get("Holding Percent") or 0) * 100, 2),
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("[YFINANCE] 미국 ETF 구성종목 생략 (%s): %s", ticker, exc)
+
+        total_assets = info.get("totalAssets")
+        total_nav_str = f"${round(total_assets / 1_000_000_000, 2)}B" if total_assets else "-"
+        fee_raw = info.get("netExpenseRatio") or info.get("annualReportExpenseRatio")
+        fee_pct = round(float(fee_raw), 2) if fee_raw is not None and float(fee_raw) > 0.05 else (round(float(fee_raw) * 100, 2) if fee_raw is not None else None)
+
+        result["etf_info"] = {
+            "issuer": info.get("fundFamily") or "-",
+            "base_index": info.get("category") or "US ETF",
+            "total_nav": total_nav_str,
+            "total_fee": fee_pct,
+            "nav": round(float(info["navPrice"]), 2) if info.get("navPrice") else snapshot["current_price"],
+            "deviation_rate": None,
+            "dividend_yield": div_pct,
+            "dividend_per_share": None,
+            "return_1m": None,
+            "return_3m": None,
+            "return_1y": round(float(info["fiftyTwoWeekChangePercent"]), 2) if info.get("fiftyTwoWeekChangePercent") else None,
+            "holdings": holdings,
+        }
+    else:
+        income_map = [
+            ("매출액(Revenue)", ["Total Revenue", "Operating Revenue"]),
+            ("매출총이익(Gross Profit)", ["Gross Profit"]),
+            ("영업이익(Operating Income)", ["Operating Income", "Total Operating Income As Reported"]),
+            ("당기순이익(Net Income)", ["Net Income", "Net Income Common Stockholders"]),
+        ]
+        balance_map = [
+            ("자산총계(Total Assets)", ["Total Assets"]),
+            ("유동자산(Current Assets)", ["Current Assets"]),
+            ("부채총계(Total Liabilities)", ["Total Liabilities Net Minority Interest"]),
+            ("자본총계(Stockholders Equity)", ["Stockholders Equity", "Total Equity Gross Minority Interest"]),
+        ]
+        cashflow_map = [
+            ("영업활동현금흐름(Operating CF)", ["Operating Cash Flow"]),
+            ("투자활동현금흐름(Investing CF)", ["Investing Cash Flow"]),
+            ("재무활동현금흐름(Financing CF)", ["Financing Cash Flow"]),
+            ("잉여현금흐름(Free Cash Flow)", ["Free Cash Flow"]),
+        ]
+        result["statements"] = {
+            "income": _extract_yf_statement(t.income_stmt, income_map),
+            "balance": _extract_yf_statement(t.balance_sheet, balance_map),
+            "cashflow": _extract_yf_statement(t.cashflow, cashflow_map),
+            "unit": "백만 달러 ($M)",
+        }
+
+    logger.info("[PARSE] 미국 종목 파싱 완료 (ticker=%s, is_etf=%s)", ticker, is_etf)
+    return result
+
+
+def fetch_news(stock_name: str, num: int = 5, gl: str = "kr") -> list[dict[str, Any]]:
     """파싱된 정식 종목명으로 Serper News API를 호출하여 최신 뉴스 5건 수집"""
     api_key = os.getenv("SERPER_API_KEY", "").strip()
     if not api_key:
@@ -324,8 +590,8 @@ def fetch_news(stock_name: str, num: int = 5) -> list[dict[str, Any]]:
     }
     payload = {
         "q": stock_name,
-        "gl": "kr",
-        "hl": "ko",
+        "gl": gl,
+        "hl": "ko" if gl == "kr" else "en",
         "num": num,
     }
 
@@ -364,17 +630,67 @@ def fetch_news(stock_name: str, num: int = 5) -> list[dict[str, Any]]:
     return news_list
 
 
-def collect_stock_data(code: str) -> dict[str, Any]:
-    """종목코드를 받아 시세/투자정보, 연간실적, 뉴스까지 통합 수집 (부분 실패 시 errors에 기록)"""
+def collect_stock_data(code_or_ticker: str, market: str | None = None) -> dict[str, Any]:
+    """국내/미국 주식·ETF를 판별하여 시세/투자정보/실적(또는 ETF 정보)/뉴스를 통합 수집"""
     errors: list[str] = []
 
-    # 1. 기본 시세 및 정식 종목명 파싱 (실패 시 뉴스 검색이 불가하므로 여기서 중단)
-    basic = fetch_basic_info(code)
+    # 0. 미국 주식/ETF 판별
+    if is_us_ticker(code_or_ticker, market=market):
+        us_data = fetch_us_asset_data(code_or_ticker)
+        stock_code = us_data["code"]
+        stock_name = us_data["name"]
+        news: list[dict[str, Any]] = []
+        try:
+            news = fetch_news(f"{stock_code} stock", num=5, gl="us")
+        except Exception as exc:
+            logger.exception("[ERROR] 미국 뉴스 수집 실패")
+            errors.append(f"뉴스: {exc}")
+
+        return {
+            "code": stock_code,
+            "name": stock_name,
+            "market": "US",
+            "currency": "USD",
+            "is_etf": us_data["is_etf"],
+            "snapshot": us_data["snapshot"],
+            "financials": [],
+            "etf_info": us_data.get("etf_info"),
+            "news": news,
+            "errors": errors,
+        }
+
+    # 1. 국내 종목 코드 확정 및 ETF 여부 판별
+    resolved_code = resolve_stock_code(code_or_ticker)
+    stock_type = fetch_kr_stock_type(resolved_code)
+
+    if stock_type == "etf":
+        etf_data = fetch_kr_etf_info(resolved_code)
+        news = []
+        try:
+            news = fetch_news(etf_data["name"], num=5, gl="kr")
+        except Exception as exc:
+            logger.exception("[ERROR] ETF 뉴스 수집 실패")
+            errors.append(f"뉴스: {exc}")
+
+        return {
+            "code": etf_data["code"],
+            "name": etf_data["name"],
+            "market": "KR",
+            "currency": "KRW",
+            "is_etf": True,
+            "snapshot": etf_data["snapshot"],
+            "financials": [],
+            "etf_info": etf_data["etf_info"],
+            "news": news,
+            "errors": errors,
+        }
+
+    # 2. 국내 일반 기업
+    basic = fetch_basic_info(resolved_code)
     stock_code = basic["code"]
     stock_name = basic["name"]
     snapshot = basic["snapshot"]
 
-    # 2. 투자정보 (시총, PER, PBR 등)
     try:
         invest = fetch_integration_info(stock_code)
         snapshot.update(invest)
@@ -382,7 +698,6 @@ def collect_stock_data(code: str) -> dict[str, Any]:
         logger.exception("[ERROR] 투자정보 수집 실패")
         errors.append(f"투자정보: {exc}")
 
-    # 3. 연간 실적
     financials: list[dict[str, Any]] = []
     try:
         financials = fetch_financials(stock_code)
@@ -390,10 +705,9 @@ def collect_stock_data(code: str) -> dict[str, Any]:
         logger.exception("[ERROR] 실적 정보 수집 실패")
         errors.append(f"실적정보: {exc}")
 
-    # 4. 파싱된 정식 종목명으로 Serper 뉴스 수집
-    news: list[dict[str, Any]] = []
+    news = []
     try:
-        news = fetch_news(stock_name, num=5)
+        news = fetch_news(stock_name, num=5, gl="kr")
     except Exception as exc:
         logger.exception("[ERROR] 뉴스 수집 실패")
         errors.append(f"뉴스: {exc}")
@@ -409,10 +723,261 @@ def collect_stock_data(code: str) -> dict[str, Any]:
     return {
         "code": stock_code,
         "name": stock_name,
+        "market": "KR",
+        "currency": "KRW",
+        "is_etf": False,
         "snapshot": snapshot,
         "financials": financials,
+        "etf_info": None,
         "news": news,
         "errors": errors,
+    }
+
+
+def _clean_yymm_label(raw: str) -> str:
+    """'2025/12<br /><span>(IFRS연결)</span>' -> '2025/12' 형태로 정제"""
+    no_tags = re.sub(r"<[^>]+>", " ", str(raw or ""))
+    first_token = no_tags.strip().split()[0] if no_tags.strip() else ""
+    return first_token
+
+
+def fetch_financial_statements(code_or_name: Any, market: str | None = None) -> dict[str, Any]:
+    """종목 설명, 현재 주가 및 (기업이면 3대 재무제표, ETF면 ETF 전용 정보) 수집"""
+    if is_us_ticker(code_or_name, market=market):
+        return fetch_us_asset_data(code_or_name)
+
+    code = resolve_stock_code(code_or_name)
+    if fetch_kr_stock_type(code) == "etf":
+        return fetch_kr_etf_info(code)
+
+    basic = fetch_basic_info(code)
+    stock_name = basic["name"]
+    snapshot = dict(basic["snapshot"])
+
+    try:
+        snapshot.update(fetch_integration_info(code))
+    except Exception as exc:
+        logger.warning("[NAVER] 재무분석 탭 투자정보 일부 생략 (%s): %s", code, exc)
+
+    # 1. 기업 개요 설명 (comment1~3)
+    descriptions: list[str] = []
+    try:
+        r_ann = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/finance/annual",
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r_ann.status_code == 200:
+            corp_summary = r_ann.json().get("corporationSummary") or {}
+            for key in ("comment1", "comment2", "comment3"):
+                val = str(corp_summary.get(key) or "").strip()
+                if val:
+                    descriptions.append(val)
+    except Exception as exc:
+        logger.warning("[NAVER] 기업개요 수집 생략 (%s): %s", code, exc)
+
+    # 2. WiseReport cF3002.aspx (포괄손익계산서=0, 재무상태표=1, 현금흐름표=2)
+    session = requests.Session()
+    ref_url = f"https://navercomp.wisereport.co.kr/v3/company/c1030001.aspx?cmp_cd={code}"
+    wise_headers = {
+        "User-Agent": NAVER_HEADERS["User-Agent"],
+        "Referer": ref_url,
+    }
+
+    logger.info("[NAVER] WiseReport 상세 재무제표 조회 시작 (code=%s)", code)
+    try:
+        r_page = session.get(ref_url, headers=wise_headers, timeout=REQUEST_TIMEOUT)
+        enc_match = re.search(r"encparam\s*:\s*['\"]([A-Za-z0-9=]+)['\"]", r_page.text)
+        if not enc_match:
+            raise RuntimeError("재무제표 인증 토큰(encparam)을 찾지 못했습니다.")
+        encparam = enc_match.group(1)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"재무제표 페이지 연결에 실패했습니다: {exc}") from exc
+
+    statements: dict[str, Any] = {}
+    rpt_map = {
+        "income": 0,    # 포괄손익계산서
+        "balance": 1,   # 재무상태표
+        "cashflow": 2,  # 현금흐름표
+    }
+
+    for key, rpt_code in rpt_map.items():
+        try:
+            r_rpt = session.get(
+                "https://navercomp.wisereport.co.kr/v3/company/cF3002.aspx",
+                params={
+                    "cmp_cd": code,
+                    "frq": 0,
+                    "rpt": rpt_code,
+                    "finGubun": "MAIN",
+                    "frqTyp": 0,
+                    "encparam": encparam,
+                },
+                headers=wise_headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            payload = r_rpt.json()
+        except Exception as exc:
+            logger.warning("[ERROR] %s 표 파싱 실패: %s", key, exc)
+            statements[key] = {"periods": [], "rows": []}
+            continue
+
+        raw_yymm = payload.get("YYMM") or []
+        # 앞 6개 연도 컬럼만 추출 (전년대비 YoY 컬럼 제외)
+        periods = [_clean_yymm_label(lbl) for lbl in raw_yymm[:6] if "전년대비" not in str(lbl)]
+        col_count = len(periods)
+
+        rows: list[dict[str, Any]] = []
+        for row in payload.get("DATA") or []:
+            acc_name = str(row.get("ACC_NM") or "").strip()
+            if row.get("LVL") != 1 or not acc_name or acc_name.startswith("*"):
+                continue
+
+            values: list[float | None] = []
+            has_any = False
+            for idx in range(1, col_count + 1):
+                raw_val = row.get(f"DATA{idx}")
+                if raw_val is None:
+                    values.append(None)
+                else:
+                    try:
+                        num = round(float(raw_val), 1)
+                        values.append(num)
+                        has_any = True
+                    except (TypeError, ValueError):
+                        values.append(None)
+
+            if has_any:
+                rows.append({"name": acc_name, "values": values})
+
+            if len(rows) >= 12:
+                break
+
+        statements[key] = {
+            "periods": periods,
+            "rows": rows,
+        }
+
+    logger.info(
+        "[PARSE] 상세 재무제표 파싱 완료 (name=%s, 손익=%d행, 재무상태=%d행, 현금흐름=%d행)",
+        stock_name,
+        len(statements["income"]["rows"]),
+        len(statements["balance"]["rows"]),
+        len(statements["cashflow"]["rows"]),
+    )
+
+    return {
+        "code": code,
+        "name": stock_name,
+        "descriptions": descriptions,
+        "snapshot": snapshot,
+        "statements": statements,
+    }
+
+
+def _classify_disclosure(title: str) -> str:
+    """공시 제목을 기반으로 초보자용 6대 카테고리로 분류"""
+    t = title.replace(" ", "")
+    if any(k in t for k in ("자기주식처분", "자사주처분", "주식소각", "자기주식소각")):
+        return "자사주 처분"
+    if any(k in t for k in ("자기주식취득", "자사주취득", "자기주식신탁")):
+        return "자사주 취득"
+    if any(k in t for k in ("배당", "주주총회", "주주환원")):
+        return "주주환원"
+    if any(k in t for k in ("사업보고서", "반기보고서", "분기보고서", "감사보고서")):
+        return "정기보고서"
+    if any(k in t for k in ("잠정실적", "영업실적", "매출액또는손익구조", "실적")):
+        return "실적"
+    if any(k in t for k in ("임원", "주요주주", "최대주주", "대량보유", "특수관계인", "소유상황")):
+        return "임원/주요주주"
+    return "기타 공시"
+
+
+def fetch_disclosures(code_or_name: Any, market: str | None = None) -> dict[str, Any]:
+    """종목의 최근 공시 20건을 카테고리별로 분류하고 DART(미국은 SEC) 바로가기 링크와 함께 반환"""
+    from urllib.parse import quote
+
+    if is_us_ticker(code_or_name, market=market):
+        ticker = str(code_or_name).strip().upper()
+        sec_url = f"https://www.sec.gov/edgar/searchedgar/companysearch?q={quote(ticker)}"
+        return {
+            "code": ticker,
+            "name": ticker,
+            "market": "US (SEC EDGAR)",
+            "is_us": True,
+            "dart_links": {
+                "home": "https://www.sec.gov/edgar/searchedgar/companysearch",
+                "corp_search": sec_url,
+            },
+            "disclosures": [],
+        }
+
+    code = resolve_stock_code(code_or_name)
+    basic = fetch_basic_info(code)
+    stock_name = basic["name"]
+
+    # 시장 구분(KOSPI / KOSDAQ) 확인
+    market = "KOSPI"
+    try:
+        r_basic = requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/basic",
+            headers=NAVER_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r_basic.status_code == 200:
+            market = r_basic.json().get("stockExchangeName") or "KOSPI"
+    except Exception:
+        pass
+
+    url = f"https://m.stock.naver.com/api/stock/{code}/disclosure"
+    logger.info("[NAVER] 최근 공시 API 접근 시작 (code=%s)", code)
+
+    try:
+        resp = requests.get(url, headers=NAVER_HEADERS, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout as exc:
+        raise RuntimeError("네이버 금융 공시 응답 시간이 초과되었습니다.") from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(f"네이버 금융 공시 네트워크 연결에 실패했습니다: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"공시 정보를 불러오지 못했습니다. (HTTP {resp.status_code})")
+
+    try:
+        raw_list = resp.json()
+    except ValueError as exc:
+        raise RuntimeError("공시 응답을 JSON으로 변환하는 데 실패했습니다.") from exc
+
+    dart_corp_search = f"https://dart.fss.or.kr/dsab001/main.do?textCrpNm={quote(stock_name)}"
+    disclosures: list[dict[str, Any]] = []
+    for item in raw_list if isinstance(raw_list, list) else []:
+        title = str(item.get("title") or "").strip()
+        disc_id = item.get("disclosureId")
+        dt_str = str(item.get("datetime") or "").replace("T", " ")[:16]
+        disclosures.append(
+            {
+                "id": disc_id,
+                "category": _classify_disclosure(title),
+                "title": title,
+                "datetime": dt_str,
+                "author": item.get("author") or "DART/거래소",
+                "url": f"https://m.stock.naver.com/domestic/stock/{code}/disclosure/{disc_id}" if disc_id else dart_corp_search,
+                "dart_url": dart_corp_search,
+            }
+        )
+
+    logger.info("[PARSE] 최근 공시 파싱 완료 (name=%s, 총 %d건)", stock_name, len(disclosures))
+
+    return {
+        "code": code,
+        "name": stock_name,
+        "market": market,
+        "dart_links": {
+            "home": "https://dart.fss.or.kr/",
+            "kospi": "https://dart.fss.or.kr/dsac001/mainY.do",
+            "kosdaq": "https://dart.fss.or.kr/dsac001/mainK.do?selectDate=&sort=&series=&mdayCnt=0",
+            "corp_search": dart_corp_search,
+        },
+        "disclosures": disclosures,
     }
 
 

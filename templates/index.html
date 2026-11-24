@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>나의 투자도우미 (My Investment Assistant)</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20261124_7" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -21,7 +21,7 @@
     <!-- 3탭 네비게이션 -->
     <nav class="tab-nav" aria-label="메인 기능 탭">
       <button type="button" class="tab-btn active" data-tab="tab1">
-        1. 종목 심층분석 채팅
+        1. 심층분석
       </button>
       <button type="button" class="tab-btn" data-tab="tab2">
         2. 리밸런싱 도우미
@@ -31,32 +31,48 @@
       </button>
     </nav>
 
-    <!-- ================= 탭 1: 종목 심층분석 채팅 (Dify 챗봇①) ================= -->
+    <!-- ================= 탭 1: 심층분석 (기업개요·주가·채팅·재무분석·최근공시 통합) ================= -->
     <section id="tab1" class="tab-panel active">
       <div class="card">
         <div class="section-header">
-          <h2 class="section-title">종목 심층분석 AI 채팅</h2>
-          <span class="badge">네이버 금융 + Serper 뉴스 근거 기반</span>
+          <h2 class="section-title">종목 심층분석</h2>
+          <span class="badge">기업개요 · 주가 · AI 채팅 · 재무분석 · 최근 공시</span>
         </div>
         <div class="form-row">
+          <div class="market-toggle" role="group" aria-label="시장 선택">
+            <button type="button" class="market-btn active" data-market="KR">국내 주식/ETF</button>
+            <button type="button" class="market-btn" data-market="US">미국 주식/ETF</button>
+          </div>
           <input
             type="text"
             id="tab1-code-input"
             class="text-input"
-            placeholder="종목코드 6자리 또는 종목명 (예: 000660 또는 SK하이닉스)"
+            placeholder="종목코드 6자리 또는 종목명 (예: 000660, KODEX 200)"
             value="000660"
           />
+          <button type="button" id="tab1-load-btn" class="primary-btn">종목 조회</button>
           <button type="button" id="tab1-reset-btn" class="secondary-btn">새 대화</button>
         </div>
-        <div class="quick-codes">
-          <span>빠른 선택:</span>
-          <button type="button" class="quick-btn tab1-quick" data-code="000660">SK하이닉스 (000660)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="005930">삼성전자 (005930)</button>
-          <button type="button" class="quick-btn tab1-quick" data-code="035420">NAVER (035420)</button>
+        <div id="tab1-quick-kr" class="quick-codes">
+          <span>국내 빠른 선택:</span>
+          <button type="button" class="quick-btn tab1-quick" data-code="000660" data-market="KR">SK하이닉스 (000660)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="005930" data-market="KR">삼성전자 (005930)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="069500" data-market="KR">KODEX 200 (ETF)</button>
+        </div>
+        <div id="tab1-quick-us" class="quick-codes hidden">
+          <span>미국 빠른 선택:</span>
+          <button type="button" class="quick-btn tab1-quick" data-code="NVDA" data-market="US">엔비디아 (NVDA)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="AAPL" data-market="US">애플 (AAPL)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="SPY" data-market="US">S&amp;P500 (SPY)</button>
+          <button type="button" class="quick-btn tab1-quick" data-code="SCHD" data-market="US">배당ETF (SCHD)</button>
         </div>
       </div>
 
-      <!-- 수집된 근거 요약 카드 -->
+      <div id="tab1-loading-data" class="status-box hidden">
+        종목 설명, 주가, 재무분석(3대 표), 최근 공시 및 뉴스를 불러오는 중입니다...
+      </div>
+
+      <!-- 맨 위: 종목 설명 + 주가 + 핵심 스냅샷 -->
       <div id="tab1-snapshot-card" class="card hidden">
         <div class="stock-title-row">
           <div>
@@ -68,6 +84,7 @@
             <span id="tab1-rate" class="change-rate">-</span>
           </div>
         </div>
+        <div id="tab1-descriptions" class="corp-desc-box" style="margin-bottom: 16px;"></div>
         <div class="snapshot-grid">
           <div class="metric-card">
             <span class="metric-label">시가총액</span>
@@ -82,8 +99,24 @@
             <strong id="tab1-pbr" class="metric-value">-</strong>
           </div>
           <div class="metric-card">
+            <span class="metric-label">외인소진율</span>
+            <strong id="tab1-foreign" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">배당수익률</span>
+            <strong id="tab1-dividend" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">52주 최고 / 최저</span>
+            <strong id="tab1-52w" class="metric-value" style="font-size: 0.92rem;">-</strong>
+          </div>
+          <div class="metric-card">
             <span class="metric-label">수집 뉴스</span>
             <strong id="tab1-news-count" class="metric-value">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">최근 업데이트</span>
+            <strong id="tab1-updated-at" class="metric-value" style="font-size: 0.92rem;">-</strong>
           </div>
         </div>
         <div id="tab1-partial-errors" class="warning-box hidden" style="margin-top: 14px; margin-bottom: 0;"></div>
@@ -94,7 +127,7 @@
         <div id="tab1-chat-messages" class="chat-box">
           <div class="chat-msg bot">
             <div class="chat-bubble">
-              종목코드나 회사명을 입력하고 질문을 보내시면, 방금 수집한 네이버 금융 데이터와 최신 뉴스를 바탕으로 분석해 드립니다.
+              종목코드나 회사명을 입력하고 질문을 보내시거나, 아래 <strong>추천 질문</strong>을 클릭해 보세요. 방금 수집한 네이버 금융 핵심 지표·최신 실적·뉴스를 바탕으로 분석해 드립니다.
             </div>
           </div>
         </div>
@@ -109,6 +142,239 @@
           />
           <button type="submit" id="tab1-send-btn" class="primary-btn">질문 전송</button>
         </form>
+
+        <!-- 선택 종목 맞춤 추천 질문 -->
+        <div class="suggested-wrap">
+          <span class="suggested-label">💡 추천 질문 (클릭하면 바로 답변합니다)</span>
+          <div id="tab1-suggested-questions" class="suggested-list"></div>
+        </div>
+      </div>
+
+      <!-- 탭 1 내부 통합 데이터 섹션 (뉴스/실적 · 재무분석 3대 표 · 최근 공시 모두 표시) -->
+      <div id="tab1-details-card" class="hidden">
+        <div class="subtab-nav">
+          <a href="#subtab-news" class="subtab-btn active" style="text-decoration:none;">📰 핵심 실적 · 최신 뉴스</a>
+          <a href="#subtab-finance" class="subtab-btn" style="text-decoration:none;">📊 재무분석 (포괄손익 · 재무상태 · 현금흐름)</a>
+          <a href="#subtab-disclosure" class="subtab-btn" style="text-decoration:none;">📑 최근 공시 (DART)</a>
+        </div>
+
+        <!-- 구역 1: 핵심 실적 & 최신 뉴스 -->
+        <div id="subtab-news" class="subtab-panel">
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">📌 핵심 실적 업데이트 내역</h3>
+              <span class="legend-note">
+                <span class="consensus-badge">추정(E)</span> 증권사 컨센서스 예상치
+              </span>
+            </div>
+            <div class="table-wrapper">
+              <table class="financials-table">
+                <thead>
+                  <tr>
+                    <th>기간</th>
+                    <th>구분</th>
+                    <th>매출액</th>
+                    <th>영업이익</th>
+                    <th>영업이익률</th>
+                    <th>ROE</th>
+                  </tr>
+                </thead>
+                <tbody id="tab1-financials-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">📰 관련 최신 뉴스 (클릭 시 원문 이동)</h3>
+              <span id="tab1-news-badge" class="badge">Serper 실시간 검색</span>
+            </div>
+            <ul id="tab1-news-list" class="news-list"></ul>
+          </div>
+        </div>
+
+        <!-- 구역 2-A: ETF 전용 정보 (ETF 선택 시 자동 표시) -->
+        <div id="subtab-etf" class="subtab-panel hidden">
+          <div class="card">
+            <div class="section-header">
+              <h2 class="section-title" style="font-size: 1.25rem;">🧺 ETF 핵심 정보 &amp; 구성종목</h2>
+              <span id="tab1-etf-base-badge" class="badge">-</span>
+            </div>
+            <div class="snapshot-grid">
+              <div class="metric-card">
+                <span class="metric-label">운용사</span>
+                <strong id="tab1-etf-issuer" class="metric-value" style="font-size: 0.98rem;">-</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">순자산총액 (AUM)</span>
+                <strong id="tab1-etf-nav" class="metric-value">-</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">총보수 (연간 수수료)</span>
+                <strong id="tab1-etf-fee" class="metric-value">-</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">분배율 / 배당률</span>
+                <strong id="tab1-etf-div" class="metric-value">-</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">괴리율</span>
+                <strong id="tab1-etf-dev" class="metric-value">-</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">최근 1년 수익률</span>
+                <strong id="tab1-etf-ret1y" class="metric-value">-</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">구성종목 TOP 10 (바구니 속 핵심 자산)</h3>
+              <span class="legend-note">비중 (%) 기준</span>
+            </div>
+            <div class="charts-grid">
+              <div class="chart-container">
+                <canvas id="tab1-etf-holdings-chart"></canvas>
+              </div>
+              <div class="table-wrapper">
+                <table class="financials-table">
+                  <thead>
+                    <tr>
+                      <th>종목명</th>
+                      <th>코드</th>
+                      <th>구성 비중</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tab1-etf-holdings-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 구역 2: 재무분석 (포괄손익 · 재무상태 · 현금흐름) -->
+        <div id="subtab-finance" class="subtab-panel">
+          <div class="card">
+            <div class="section-header">
+              <h2 class="section-title" style="font-size: 1.25rem;">📊 재무분석 (3대 재무제표 시각화)</h2>
+              <span class="badge">포괄손익계산서 · 재무상태표 · 현금흐름표</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">1. 포괄손익계산서 (얼마나 팔고 남겼나?)</h3>
+              <span class="legend-note">단위: 억원</span>
+            </div>
+            <div class="charts-grid" style="margin-bottom: 14px;">
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📊 막대그래프 (매출액 · 영업이익 · 당기순이익)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-income-bar-chart"></canvas>
+                </div>
+              </div>
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📈 꺾은선 차트 (추이 비교)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-income-line-chart"></canvas>
+                </div>
+              </div>
+            </div>
+            <button type="button" class="toggle-table-btn" data-target="tab1-income-table-wrap" data-title="📋 포괄손익계산서 전체 표">
+              📋 포괄손익계산서 전체 표 보기 ▼
+            </button>
+            <div id="tab1-income-table-wrap" class="table-wrapper hidden" style="margin-top: 14px;">
+              <table class="financials-table" id="tab1-income-table"></table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">2. 재무상태표 (재산·빚·자본 현황)</h3>
+              <span class="legend-note">단위: 억원</span>
+            </div>
+            <div class="charts-grid" style="margin-bottom: 14px;">
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📊 막대그래프 (자산총계 · 부채총계 · 자본총계)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-balance-bar-chart"></canvas>
+                </div>
+              </div>
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📈 꺾은선 차트 (추이 비교)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-balance-line-chart"></canvas>
+                </div>
+              </div>
+            </div>
+            <button type="button" class="toggle-table-btn" data-target="tab1-balance-table-wrap" data-title="📋 재무상태표 전체 표">
+              📋 재무상태표 전체 표 보기 ▼
+            </button>
+            <div id="tab1-balance-table-wrap" class="table-wrapper hidden" style="margin-top: 14px;">
+              <table class="financials-table" id="tab1-balance-table"></table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header">
+              <h3 class="section-title">3. 현금흐름표 (실제 현금이 들어오고 나간 흐름)</h3>
+              <span class="legend-note">단위: 억원</span>
+            </div>
+            <div class="charts-grid" style="margin-bottom: 14px;">
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📊 막대그래프 (영업 · 투자 · 재무활동)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-cashflow-bar-chart"></canvas>
+                </div>
+              </div>
+              <div>
+                <p class="metric-label" style="margin-bottom: 8px;">📈 꺾은선 차트 (추이 비교)</p>
+                <div class="chart-container">
+                  <canvas id="tab1-cashflow-line-chart"></canvas>
+                </div>
+              </div>
+            </div>
+            <button type="button" class="toggle-table-btn" data-target="tab1-cashflow-table-wrap" data-title="📋 현금흐름표 전체 표">
+              📋 현금흐름표 전체 표 보기 ▼
+            </button>
+            <div id="tab1-cashflow-table-wrap" class="table-wrapper hidden" style="margin-top: 14px;">
+              <table class="financials-table" id="tab1-cashflow-table"></table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 구역 3: 최근 공시 (카테고리 분류 + DART 하이퍼링크) -->
+        <div id="subtab-disclosure" class="subtab-panel">
+          <div class="card">
+            <div class="section-header">
+              <h3 id="tab1-disc-title" class="section-title">최근 공시 (DART 전자공시 연동)</h3>
+              <span id="tab1-market-badge" class="badge">-</span>
+            </div>
+
+            <div class="dart-links-bar" style="margin-top: 0; padding-top: 0; border-top: none; margin-bottom: 16px;">
+              <span class="dart-links-title">🏛️ DART 바로가기:</span>
+              <a href="https://dart.fss.or.kr/" target="_blank" rel="noopener noreferrer" class="dart-link-btn">
+                DART 메인 ↗
+              </a>
+              <a href="https://dart.fss.or.kr/dsac001/mainY.do" target="_blank" rel="noopener noreferrer" class="dart-link-btn">
+                유가증권시장(코스피) 최근공시 ↗
+              </a>
+              <a href="https://dart.fss.or.kr/dsac001/mainK.do?selectDate=&sort=&series=&mdayCnt=0" target="_blank" rel="noopener noreferrer" class="dart-link-btn">
+                코스닥시장 최근공시 ↗
+              </a>
+              <a id="tab1-dart-corp-link" href="https://dart.fss.or.kr/" target="_blank" rel="noopener noreferrer" class="dart-link-btn highlight hidden">
+                이 종목 DART 공시검색 ↗
+              </a>
+            </div>
+
+            <div id="tab1-category-filters" class="category-filter-bar"></div>
+            <ul id="tab1-disclosure-list" class="news-list" style="margin-top: 14px;"></ul>
+            <div id="tab1-disc-pagination" class="pagination-bar hidden"></div>
+            <button type="button" id="tab1-disc-toggle-btn" class="toggle-table-btn hidden" style="margin-top: 12px;">
+              📑 전체 공시 보기 ▼
+            </button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -323,6 +589,6 @@
     </section>
   </div>
 
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=20261124_7"></script>
 </body>
 </html>

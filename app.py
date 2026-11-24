@@ -5,7 +5,12 @@ import os
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
-from collector import collect_stock_data, resolve_stock_code
+from collector import (
+    collect_stock_data,
+    fetch_disclosures,
+    fetch_financial_statements,
+    resolve_stock_code,
+)
 from dify_client import ask_dify_chatbot
 from portfolio import calculate_rebalancing
 from technical import calculate_technical_indicators
@@ -64,13 +69,14 @@ def health_check():
 
 @app.post("/fetch")
 def fetch_stock():
-    """종목코드를 받아 네이버 금융 수집 + Serper 뉴스 검색을 통합 실행하고 JSON 반환"""
+    """종목코드를 받아 네이버 금융/미국 종목 수집 + Serper 뉴스 검색을 통합 실행하고 JSON 반환"""
     payload = request.get_json(silent=True) or {}
     code = payload.get("code", "")
-    logger.info("[REQUEST] POST /fetch code=%s", str(code).strip())
+    market = payload.get("market")
+    logger.info("[REQUEST] POST /fetch code=%s market=%s", str(code).strip(), market)
 
     try:
-        result = collect_stock_data(code)
+        result = collect_stock_data(code, market=market)
         return jsonify(result), 200
     except ValueError as exc:
         logger.warning("[ERROR] 잘못된 요청 (code=%s): %s", code, exc)
@@ -85,14 +91,14 @@ def chat_analysis():
     """[탭1] 종목코드/종목명 + 질문을 받아 collector 수집 JSON을 Dify 챗봇① inputs에 주입해 답변 반환"""
     payload = request.get_json(silent=True) or {}
     raw_code = payload.get("code", "")
+    market = payload.get("market")
     question = str(payload.get("question", "")).strip() or "이 종목의 현재 투자 지표, 실적 추이, 최신 뉴스를 근거로 분석해 주세요."
     conversation_id = payload.get("conversation_id") or None
 
-    logger.info("[REQUEST] POST /api/chat/analysis code=%s", str(raw_code).strip())
+    logger.info("[REQUEST] POST /api/chat/analysis code=%s market=%s", str(raw_code).strip(), market)
 
     try:
-        resolved_code = resolve_stock_code(raw_code)
-        stock_data = collect_stock_data(resolved_code)
+        stock_data = collect_stock_data(raw_code, market=market)
 
         dify_inputs = {
             "stock_code": stock_data["code"],
@@ -103,7 +109,8 @@ def chat_analysis():
         # Dify 오케스트레이드 변수 유무와 무관하게 챗봇이 데이터를 확실히 읽을 수 있도록 질문에 근거 JSON 함께 주입
         dify_query = (
             f"[종목 분석 요청: {stock_data['name']}({stock_data['code']})]\n"
-            f"아래는 방금 수집한 최신 JSON 데이터입니다. 반드시 이 데이터만을 근거로 답변하세요.\n"
+            f"아래는 방금 수집한 최신 JSON 데이터입니다. 반드시 이 데이터만을 근거로 답변하며,\n"
+            f"가능하면 📊 핵심 답변, 📌 핵심 지표 및 최신 실적 업데이트, 📰 최근 이슈(뉴스 링크/제목 참고), ⚠️ 위험/기회 요인 순으로 알기 쉽게 정리해 주세요.\n"
             f"```json\n{json.dumps(stock_data, ensure_ascii=False)}\n```\n\n"
             f"사용자 질문: {question}"
         )
@@ -225,6 +232,46 @@ def chat_technical():
     except Exception as exc:
         logger.exception("[ERROR] 탭3 지표해석기 채팅 실패")
         return jsonify({"error": f"기술지표 설명 채팅 중 오류가 발생했습니다: {exc}"}), 500
+
+
+@app.post("/api/financials")
+def financial_statements():
+    """[탭1] 종목 설명, 주가 및 (기업 3대 재무제표 또는 ETF 전용 정보) 반환"""
+    payload = request.get_json(silent=True) or {}
+    raw_code = payload.get("code", "")
+    market = payload.get("market")
+    logger.info("[REQUEST] POST /api/financials code=%s market=%s", str(raw_code).strip(), market)
+
+    try:
+        result = fetch_financial_statements(raw_code, market=market)
+        logger.info("[RESPONSE] 탭1 재무/ETF 응답 완료 (name=%s, is_etf=%s)", result["name"], result.get("is_etf"))
+        return jsonify(result), 200
+    except ValueError as exc:
+        logger.warning("[ERROR] 탭1 재무/ETF 잘못된 요청: %s", exc)
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("[ERROR] 탭1 재무/ETF 조회 실패")
+        return jsonify({"error": f"재무분석 데이터를 가져오는 중 오류가 발생했습니다: {exc}"}), 500
+
+
+@app.post("/api/disclosures")
+def stock_disclosures():
+    """[탭1] 종목의 최근 공시 분류 및 DART/SEC 바로가기 링크 반환"""
+    payload = request.get_json(silent=True) or {}
+    raw_code = payload.get("code", "")
+    market = payload.get("market")
+    logger.info("[REQUEST] POST /api/disclosures code=%s market=%s", str(raw_code).strip(), market)
+
+    try:
+        result = fetch_disclosures(raw_code, market=market)
+        logger.info("[RESPONSE] 탭1 공시 응답 완료 (name=%s, count=%d)", result["name"], len(result["disclosures"]))
+        return jsonify(result), 200
+    except ValueError as exc:
+        logger.warning("[ERROR] 탭5 잘못된 요청: %s", exc)
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("[ERROR] 탭5 공시 조회 실패")
+        return jsonify({"error": f"최근 공시 데이터를 가져오는 중 오류가 발생했습니다: {exc}"}), 500
 
 
 if __name__ == "__main__":
